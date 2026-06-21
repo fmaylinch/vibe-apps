@@ -1,19 +1,23 @@
 import Foundation
 
-/// Starter source handed to brand-new mini-apps. Each persists via the host's
-/// `HostStorage` bridge so state survives relaunch.
+/// Starter source handed to brand-new mini-apps.
+///
+/// These are *fragments*, not full HTML documents: the host (`MiniAppDocument`)
+/// wraps them in the standard scaffold — doctype, `<head>`, viewport meta, and
+/// base CSS — so authors only write the interesting part. State persists via
+/// the host's `HostStorage` bridge so it survives relaunch.
 enum MiniAppTemplate {
-    /// Plain HTML/CSS/JS Todo List.
+    /// Plain HTML/CSS/JS Todo List. Just body markup, a `<style>` block, and a
+    /// `<script>` — the document shell is added by the host.
     static let todoList = """
-    <!doctype html>
-    <html>
-    <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <h1>My Todos</h1>
+    <div class="row">
+      <input id="field" type="text" placeholder="Add a task...">
+      <button onclick="addTodo()">Add</button>
+    </div>
+    <ul id="list"></ul>
+
     <style>
-      :root { color-scheme: light dark; }
-      body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 16px; }
-      h1 { font-size: 1.4rem; margin: 0 0 12px; }
       .row { display: flex; gap: 8px; margin-bottom: 12px; }
       input[type=text] { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #8884; border-radius: 10px; }
       button { padding: 10px 14px; font-size: 1rem; border: 0; border-radius: 10px; background: #007aff; color: #fff; }
@@ -23,14 +27,7 @@ enum MiniAppTemplate {
       li span { flex: 1; }
       .del { background: transparent; color: #ff3b30; padding: 4px 8px; }
     </style>
-    </head>
-    <body>
-      <h1>My Todos</h1>
-      <div class="row">
-        <input id="field" type="text" placeholder="Add a task...">
-        <button onclick="addTodo()">Add</button>
-      </div>
-      <ul id="list"></ul>
+
     <script>
       var KEY = "todos";
       var todos = JSON.parse(HostStorage.getItem(KEY) || "[]");
@@ -76,53 +73,37 @@ enum MiniAppTemplate {
 
       render();
     </script>
-    </body>
-    </html>
     """
 
-    /// React + JSX counter. React/ReactDOM/Babel are injected by the host when
-    /// the mini-app's framework is `.react`, so JSX in the text/babel script works.
+    /// React + JSX counter. Just an `App` component and a `<style>` block — the
+    /// host hoists the styles into `<head>`, wraps the JSX in a Babel script,
+    /// and auto-mounts `<App/>` (no `createRoot` boilerplate needed).
     static let reactCounter = """
-    <!doctype html>
-    <html>
-    <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    const { useState } = React;
+    const KEY = "count";
+
+    function App() {
+      const [count, setCount] = useState(Number(HostStorage.getItem(KEY) || "0"));
+
+      function update(next) {
+        setCount(next);
+        HostStorage.setItem(KEY, String(next));
+      }
+
+      return (
+        <div style={{ textAlign: "center" }}>
+          <h1>Count: {count}</h1>
+          <button onClick={() => update(count + 1)}>+1</button>
+          <button onClick={() => update(count - 1)}>-1</button>
+          <button className="reset" onClick={() => update(0)}>Reset</button>
+        </div>
+      );
+    }
+
     <style>
-      :root { color-scheme: light dark; }
-      body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 24px; text-align: center; }
-      h1 { font-size: 2.2rem; margin: 0 0 20px; }
+      h1 { font-size: 2.2rem; }
       button { padding: 12px 18px; margin: 4px; font-size: 1.1rem; border: 0; border-radius: 12px; background: #007aff; color: #fff; }
       .reset { background: #8884; color: inherit; }
     </style>
-    </head>
-    <body>
-      <div id="root"></div>
-    <script type="text/babel">
-      const { useState } = React;
-      const KEY = "count";
-
-      function App() {
-        const [count, setCount] = useState(Number(HostStorage.getItem(KEY) || "0"));
-
-        function update(next) {
-          setCount(next);
-          HostStorage.setItem(KEY, String(next));
-        }
-
-        return (
-          <div>
-            <h1>Count: {count}</h1>
-            <button onClick={() => update(count + 1)}>+1</button>
-            <button onClick={() => update(count - 1)}>-1</button>
-            <button className="reset" onClick={() => update(0)}>Reset</button>
-          </div>
-        );
-      }
-
-      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-    </script>
-    </body>
-    </html>
     """
 }

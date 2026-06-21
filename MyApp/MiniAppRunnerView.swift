@@ -8,7 +8,7 @@ struct MiniAppRunnerView: View {
 
     var body: some View {
         MiniAppWebView(
-            html: app.source,
+            source: app.source,
             initialData: app.storageJSON,
             injectReact: app.framework == MiniAppFramework.react.rawValue,
             onPersist: { json in app.storageJSON = json }

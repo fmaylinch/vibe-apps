@@ -74,9 +74,9 @@ struct MiniAppEditorView: View {
         let storage = "Persist data with HostStorage.getItem(key) / HostStorage.setItem(key, value)."
         switch MiniAppFramework(rawValue: app.framework) ?? .vanilla {
         case .vanilla:
-            return storage
+            return storage + " No need for <html> or <head> — just write body markup, <style>, and <script>. (A full HTML document still works if you write one.)"
         case .react:
-            return storage + " React, ReactDOM and Babel are available — write JSX inside a <script type=\"text/babel\"> tag."
+            return storage + " Just write an App component (and optional <style> blocks) — React is loaded and <App/> is mounted for you. No <html>, #root, or createRoot needed."
         }
     }
 }

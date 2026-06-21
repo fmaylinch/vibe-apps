@@ -21,11 +21,19 @@ typealias PlatformViewRepresentable = UIViewRepresentable
 /// When `injectReact` is true, React + ReactDOM + Babel (bundled under
 /// WebRuntime/) are injected before the page loads, so the source can use
 /// JSX inside `<script type="text/babel">` with no build step.
+///
+/// `source` may be a bare fragment — `MiniAppDocument` wraps it in the standard
+/// HTML scaffold (and, for React, auto-mounts `<App/>`) before it loads.
 struct MiniAppWebView: PlatformViewRepresentable {
-    let html: String
+    let source: String
     let initialData: String
     let injectReact: Bool
     let onPersist: (String) -> Void
+
+    /// The full HTML document that actually loads, composed from `source`.
+    private var document: String {
+        MiniAppDocument.html(for: source, react: injectReact)
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(initialData: initialData, onPersist: onPersist)
@@ -60,15 +68,17 @@ struct MiniAppWebView: PlatformViewRepresentable {
         config.userContentController = controller
 
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.loadHTMLString(html, baseURL: nil)
-        context.coordinator.lastHTML = html
+        let document = self.document
+        webView.loadHTMLString(document, baseURL: nil)
+        context.coordinator.lastHTML = document
         return webView
     }
 
     private func reloadIfNeeded(_ webView: WKWebView, context: Context) {
-        guard context.coordinator.lastHTML != html else { return }
-        context.coordinator.lastHTML = html
-        webView.loadHTMLString(html, baseURL: nil)
+        let document = self.document
+        guard context.coordinator.lastHTML != document else { return }
+        context.coordinator.lastHTML = document
+        webView.loadHTMLString(document, baseURL: nil)
     }
 
     /// JS injected before the page loads: seeds saved data and exposes `HostStorage`.
