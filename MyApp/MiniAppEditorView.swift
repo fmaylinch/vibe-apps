@@ -2,8 +2,16 @@ import SwiftUI
 import SwiftData
 
 /// Edit a mini-app's metadata, runtime, and its HTML/CSS/JavaScript source.
+///
+/// When `isNew` is `true` the mini-app has not yet been inserted into the model
+/// context — it only becomes persisted when the user taps **Save**, so tapping
+/// **Cancel** discards it entirely.
 struct MiniAppEditorView: View {
     @Bindable var app: MiniApp
+    /// Whether `app` is a brand-new draft awaiting its first save.
+    var isNew: Bool = false
+
+    @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
 
     /// Binds the model's string-backed framework to the typed enum for the Picker.
@@ -40,13 +48,21 @@ struct MiniAppEditorView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("Edit Mini App")
+        .navigationTitle(isNew ? "New Mini App" : "Edit Mini App")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", role: .cancel) {
+                    dismiss()
+                }
+            }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Done") {
+                Button("Save") {
+                    if isNew {
+                        context.insert(app)
+                    }
                     app.updatedAt = .now
                     dismiss()
                 }

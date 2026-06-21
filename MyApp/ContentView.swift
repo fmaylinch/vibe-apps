@@ -1,11 +1,11 @@
 import SwiftUI
 import SwiftData
 
-@main struct MyApp: App {
+@main struct VibeAppsApp: App {
     let container: ModelContainer
 
     init() {
-        container = MyApp.makeContainer()
+        container = VibeAppsApp.makeContainer()
     }
 
     var body: some Scene {
@@ -40,7 +40,11 @@ struct HomeView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \MiniApp.updatedAt, order: .reverse) private var miniApps: [MiniApp]
 
+    /// An existing mini-app being edited.
     @State private var editingApp: MiniApp?
+    /// A brand-new draft awaiting its first save. It isn't inserted into the
+    /// model context until the user taps Save in the editor.
+    @State private var newApp: MiniApp?
 
     private let columns = [GridItem(.adaptive(minimum: 120), spacing: 16)]
 
@@ -67,6 +71,11 @@ struct HomeView: View {
             .sheet(item: $editingApp) { app in
                 NavigationStack {
                     MiniAppEditorView(app: app)
+                }
+            }
+            .sheet(item: $newApp) { app in
+                NavigationStack {
+                    MiniAppEditorView(app: app, isNew: true)
                 }
             }
         }
@@ -127,11 +136,12 @@ struct HomeView: View {
         }
     }
 
+    /// Builds a draft mini-app and presents the editor. The draft is *not*
+    /// inserted into the model context here — that happens only when the user
+    /// taps Save, so dismissing the editor discards it.
     private func createMiniApp(name: String, icon: String,
                                framework: MiniAppFramework, source: String) {
-        let app = MiniApp(name: name, icon: icon, source: source, framework: framework.rawValue)
-        context.insert(app)
-        editingApp = app
+        newApp = MiniApp(name: name, icon: icon, source: source, framework: framework.rawValue)
     }
 
     private func delete(_ app: MiniApp) {
