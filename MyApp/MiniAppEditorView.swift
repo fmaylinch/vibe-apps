@@ -22,6 +22,15 @@ struct MiniAppEditorView: View {
         )
     }
 
+    /// Binds the optional inline max-height to an editable text field. An empty
+    /// or non-positive value clears the cap (`nil` — grow to fit).
+    private var maxHeightText: Binding<String> {
+        Binding(
+            get: { app.inlineMaxHeight.map { String(Int($0)) } ?? "" },
+            set: { app.inlineMaxHeight = Double($0).flatMap { $0 > 0 ? $0 : nil } }
+        )
+    }
+
     var body: some View {
         Form {
             Section("Details") {
@@ -31,6 +40,13 @@ struct MiniAppEditorView: View {
                     ForEach(MiniAppFramework.allCases) { framework in
                         Text(framework.displayName).tag(framework)
                     }
+                }
+                Toggle("Show inline in list", isOn: $app.isInline)
+                if app.isInline {
+                    TextField("Max height (points, optional)", text: maxHeightText)
+                        #if os(iOS)
+                        .keyboardType(.numberPad)
+                        #endif
                 }
             }
             Section("Source") {

@@ -34,8 +34,9 @@ import SwiftData
     }
 }
 
-/// The home screen: a grid of the user's mini-apps with full CRUD.
-/// Tap a mini-app to run it; long-press (context menu) to edit or delete.
+/// The home screen: a vertical list of the user's mini-apps with full CRUD.
+/// Tap a mini-app to run it; mini-apps marked inline render directly in the
+/// list. Long-press (context menu) to edit or delete.
 struct HomeView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \MiniApp.updatedAt, order: .reverse) private var miniApps: [MiniApp]
@@ -46,15 +47,13 @@ struct HomeView: View {
     /// model context until the user taps Save in the editor.
     @State private var newApp: MiniApp?
 
-    private let columns = [GridItem(.adaptive(minimum: 120), spacing: 16)]
-
     var body: some View {
         NavigationStack {
             Group {
                 if miniApps.isEmpty {
                     emptyState
                 } else {
-                    grid
+                    list
                 }
             }
             .navigationTitle("Mini Apps")
@@ -101,14 +100,10 @@ struct HomeView: View {
         }
     }
 
-    private var grid: some View {
-        ScrollView {
-            LazyVGrid(columns: columns, spacing: 16) {
-                ForEach(miniApps) { app in
-                    NavigationLink(value: app) {
-                        MiniAppCard(app: app)
-                    }
-                    .buttonStyle(.plain)
+    private var list: some View {
+        List {
+            ForEach(miniApps) { app in
+                row(for: app)
                     .contextMenu {
                         Button { editingApp = app } label: {
                             Label("Edit", systemImage: "pencil")
@@ -117,9 +112,24 @@ struct HomeView: View {
                             Label("Delete", systemImage: "trash")
                         }
                     }
-                }
             }
-            .padding()
+        }
+    }
+
+    /// A single list entry. Inline mini-apps render their UI directly beneath a
+    /// non-interactive header; the rest are a plain row that opens the runner on tap.
+    @ViewBuilder
+    private func row(for app: MiniApp) -> some View {
+        if app.isInline {
+            VStack(alignment: .leading, spacing: 10) {
+                MiniAppRow(app: app)
+                InlineMiniAppView(app: app)
+            }
+            .padding(.vertical, 4)
+        } else {
+            NavigationLink(value: app) {
+                MiniAppRow(app: app)
+            }
         }
     }
 
@@ -149,21 +159,63 @@ struct HomeView: View {
     }
 }
 
-/// A single mini-app tile shown in the home grid.
-struct MiniAppCard: View {
+/// A single mini-app entry shown in the home list: emoji icon plus name.
+struct MiniAppRow: View {
     let app: MiniApp
 
     var body: some View {
-        VStack(spacing: 10) {
+        HStack(spacing: 14) {
             Text(app.icon)
-                .font(.system(size: 44))
-                .frame(width: 80, height: 80)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 18))
+                .font(.system(size: 25))
+                .frame(width: 40, height: 40)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             Text(app.name)
-                .font(.subheadline)
+                .font(.headline)
                 .lineLimit(1)
                 .foregroundStyle(.primary)
+            Spacer()
         }
-        .frame(maxWidth: .infinity)
+    }
+}
+
+/// Renders an inline mini-app sized to its content height so it occupies only
+/// as much vertical space as the mini-app actually needs.
+private struct InlineMiniAppView: View {
+    @Bindable var app: MiniApp
+    /// The mini-app's measured content height, reported by the web view.
+    @State private var contentHeight: CGFloat = 1
+
+    /// The author-specified height cap, if any (positive values only).
+    private var maxHeight: CGFloat? {
+        guard let cap = app.inlineMaxHeight, cap > 0 else { return nil }
+        return CGFloat(cap)
+    }
+
+    /// True when the content is taller than the cap, so the view scrolls within it.
+    private var isCapped: Bool {
+        guard let maxHeight else { return false }
+        return contentHeight > maxHeight
+    }
+
+    /// The height the row actually occupies: the content height, clamped to the cap.
+    private var frameHeight: CGFloat {
+        guard let maxHeight else { return contentHeight }
+        return min(contentHeight, maxHeight)
+    }
+
+    var body: some View {
+        MiniAppWebView(
+            source: app.source,
+            initialData: app.storageJSON,
+            injectReact: app.framework == MiniAppFramework.react.rawValue,
+            onPersist: { json in app.storageJSON = json },
+            sizeToContent: true,
+            onHeightChange: { newHeight in
+                if abs(newHeight - contentHeight) > 0.5 { contentHeight = newHeight }
+            },
+            scrollEnabled: isCapped
+        )
+        .frame(height: frameHeight)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

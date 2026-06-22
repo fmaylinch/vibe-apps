@@ -24,11 +24,24 @@ typealias PlatformViewRepresentable = UIViewRepresentable
 ///
 /// `source` may be a bare fragment — `MiniAppDocument` wraps it in the standard
 /// HTML scaffold (and, for React, auto-mounts `<App/>`) before it loads.
+///
+/// When `sizeToContent` is true the web view disables its own scrolling and
+/// reports its document height via `onHeightChange`, so a host can size the
+/// view to fit its content exactly (used for inline mini-apps in a list).
 struct MiniAppWebView: PlatformViewRepresentable {
     let source: String
     let initialData: String
     let injectReact: Bool
     let onPersist: (String) -> Void
+    /// When true, the web view lays out at its full content height and reports
+    /// that height through `onHeightChange` instead of scrolling internally.
+    var sizeToContent: Bool = false
+    /// Called with the document's measured height whenever it changes.
+    var onHeightChange: ((CGFloat) -> Void)? = nil
+    /// Whether the web view scrolls its own content. Inline views set this only
+    /// when their content is clamped to a max height; otherwise the host (list)
+    /// scrolls and the web view is sized to fit.
+    var scrollEnabled: Bool = true
 
     /// The full HTML document that actually loads, composed from `source`.
     private var document: String {
@@ -36,7 +49,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(initialData: initialData, onPersist: onPersist)
+        Coordinator(initialData: initialData, onPersist: onPersist, onHeightChange: onHeightChange)
     }
 
     #if os(macOS)
@@ -64,10 +77,25 @@ struct MiniAppWebView: PlatformViewRepresentable {
                                                forMainFrameOnly: true))
         controller.add(context.coordinator, name: "storage")
 
+        // Content-height reporting for inline (size-to-content) rendering.
+        if sizeToContent {
+            controller.addUserScript(WKUserScript(source: heightObserverScript,
+                                                   injectionTime: .atDocumentEnd,
+                                                   forMainFrameOnly: true))
+            controller.add(context.coordinator, name: "hostHeight")
+        }
+
         let config = WKWebViewConfiguration()
         config.userContentController = controller
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        if sizeToContent {
+            webView.isOpaque = false
+            webView.backgroundColor = .clear
+        }
+        #if os(iOS)
+        webView.scrollView.isScrollEnabled = scrollEnabled
+        #endif
         let document = self.document
         webView.loadHTMLString(document, baseURL: nil)
         context.coordinator.lastHTML = document
@@ -75,6 +103,11 @@ struct MiniAppWebView: PlatformViewRepresentable {
     }
 
     private func reloadIfNeeded(_ webView: WKWebView, context: Context) {
+        #if os(iOS)
+        // Capping can toggle as the content height crosses the max, so keep
+        // the scroll setting in sync on every update.
+        webView.scrollView.isScrollEnabled = scrollEnabled
+        #endif
         let document = self.document
         guard context.coordinator.lastHTML != document else { return }
         context.coordinator.lastHTML = document
@@ -101,6 +134,25 @@ struct MiniAppWebView: PlatformViewRepresentable {
         """
     }
 
+    /// JS injected after the document loads: reports the body's content height
+    /// to the host whenever it changes, so the native view can size to fit.
+    private var heightObserverScript: String {
+        """
+        (function () {
+            function report() {
+                var h = Math.ceil(document.body ? document.body.scrollHeight
+                                                : document.documentElement.scrollHeight);
+                window.webkit.messageHandlers.hostHeight.postMessage(h);
+            }
+            window.addEventListener("load", report);
+            if (document.body && window.ResizeObserver) {
+                new ResizeObserver(report).observe(document.body);
+            }
+            report();
+        })();
+        """
+    }
+
     /// Loads the bundled React runtime files (UMD React, ReactDOM, Babel) as
     /// JS source strings, in load order. Missing files are skipped silently.
     private static func reactRuntimeScripts() -> [String] {
@@ -122,10 +174,14 @@ struct MiniAppWebView: PlatformViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler {
         private var store: [String: String]
         private let onPersist: (String) -> Void
+        private let onHeightChange: ((CGFloat) -> Void)?
         var lastHTML: String = ""
 
-        init(initialData: String, onPersist: @escaping (String) -> Void) {
+        init(initialData: String,
+             onPersist: @escaping (String) -> Void,
+             onHeightChange: ((CGFloat) -> Void)?) {
             self.onPersist = onPersist
+            self.onHeightChange = onHeightChange
             if let data = initialData.data(using: .utf8),
                let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
                 self.store = parsed
@@ -136,6 +192,13 @@ struct MiniAppWebView: PlatformViewRepresentable {
 
         func userContentController(_ controller: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
+            if message.name == "hostHeight" {
+                if let height = message.body as? NSNumber {
+                    onHeightChange?(CGFloat(height.doubleValue))
+                }
+                return
+            }
+
             guard let body = message.body as? [String: Any],
                   let op = body["op"] as? String else { return }
             switch op {

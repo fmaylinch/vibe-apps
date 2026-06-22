@@ -16,6 +16,13 @@ final class MiniApp {
     var framework: String = MiniAppFramework.vanilla.rawValue
     /// JSON object string backing the `HostStorage` bridge (e.g. {"todos":"[...]"}).
     var storageJSON: String = "{}"
+    /// When `true`, the mini-app renders directly in the main list instead of
+    /// requiring a tap to open it in its own screen.
+    var isInline: Bool = false
+    /// Optional cap (in points) on the height an inline mini-app occupies in the
+    /// list. `nil` means no cap — the row grows to fit the content. When the
+    /// content exceeds the cap, the inline view scrolls within this height.
+    var inlineMaxHeight: Double?
     var createdAt: Date = Date.now
     var updatedAt: Date = Date.now
 
@@ -24,6 +31,8 @@ final class MiniApp {
          source: String = "",
          framework: String = MiniAppFramework.vanilla.rawValue,
          storageJSON: String = "{}",
+         isInline: Bool = false,
+         inlineMaxHeight: Double? = nil,
          createdAt: Date = .now,
          updatedAt: Date = .now) {
         self.name = name
@@ -31,6 +40,8 @@ final class MiniApp {
         self.source = source
         self.framework = framework
         self.storageJSON = storageJSON
+        self.isInline = isInline
+        self.inlineMaxHeight = inlineMaxHeight
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
