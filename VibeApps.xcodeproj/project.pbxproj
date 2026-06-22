@@ -6,6 +6,11 @@
 	objectVersion = 90;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		53BA29F22FE9A50100BDB2D8 /* Runestone in Frameworks */ = {isa = PBXBuildFile; productRef = 53BA29F12FE9A50100BDB2D8 /* Runestone */; };
+		53BA29F62FE9A60900BDB2D8 /* TreeSitterJavaScriptRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 53BA29F52FE9A60900BDB2D8 /* TreeSitterJavaScriptRunestone */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* VibeApps.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VibeApps.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -35,6 +40,8 @@
 		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				53BA29F62FE9A60900BDB2D8 /* TreeSitterJavaScriptRunestone in Frameworks */,
+				53BA29F22FE9A50100BDB2D8 /* Runestone in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -44,6 +51,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000010 /* MyApp */,
+				53BA29F42FE9A60900BDB2D8 /* Frameworks */,
 				000000000000000000000020 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,6 +62,13 @@
 				000000000000000000000120 /* VibeApps.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		53BA29F42FE9A60900BDB2D8 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -73,6 +88,10 @@
 				000000000000000000000010 /* MyApp */,
 			);
 			name = VibeApps;
+			packageProductDependencies = (
+				53BA29F12FE9A50100BDB2D8 /* Runestone */,
+				53BA29F52FE9A60900BDB2D8 /* TreeSitterJavaScriptRunestone */,
+			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* VibeApps.app */;
 			productType = "com.apple.product-type.application";
@@ -101,6 +120,10 @@
 			);
 			mainGroup = 000000000000000000000001;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				53BA29F02FE9A50100BDB2D8 /* XCRemoteSwiftPackageReference "Runestone" */,
+				53BA29F32FE9A59000BDB2D8 /* XCRemoteSwiftPackageReference "TreeSitterLanguages" */,
+			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;
 			projectDirPath = "";
@@ -291,13 +314,13 @@
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -332,13 +355,13 @@
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -362,6 +385,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		53BA29F02FE9A50100BDB2D8 /* XCRemoteSwiftPackageReference "Runestone" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/simonbs/Runestone.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.5.2;
+			};
+		};
+		53BA29F32FE9A59000BDB2D8 /* XCRemoteSwiftPackageReference "TreeSitterLanguages" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/simonbs/TreeSitterLanguages.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.10;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		53BA29F12FE9A50100BDB2D8 /* Runestone */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 53BA29F02FE9A50100BDB2D8 /* XCRemoteSwiftPackageReference "Runestone" */;
+			productName = Runestone;
+		};
+		53BA29F52FE9A60900BDB2D8 /* TreeSitterJavaScriptRunestone */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 53BA29F32FE9A59000BDB2D8 /* XCRemoteSwiftPackageReference "TreeSitterLanguages" */;
+			productName = TreeSitterJavaScriptRunestone;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 000000000000000000000000 /* Project object */;
 }

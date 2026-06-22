@@ -50,13 +50,9 @@ struct MiniAppEditorView: View {
                 }
             }
             Section("Source") {
-                TextEditor(text: $app.source)
-                    .font(.system(.body, design: .monospaced))
+                CodeEditorView(text: $app.source)
                     .frame(minHeight: 280)
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
+                    .listRowInsets(EdgeInsets())
             }
             Section {
                 Text(footnote)
