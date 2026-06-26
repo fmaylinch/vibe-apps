@@ -28,6 +28,9 @@ typealias PlatformViewRepresentable = UIViewRepresentable
 /// When `sizeToContent` is true the web view disables its own scrolling and
 /// reports its document height via `onHeightChange`, so a host can size the
 /// view to fit its content exactly (used for inline mini-apps in a list).
+///
+/// `console.*` output and uncaught errors are forwarded to `onLog` (when set)
+/// so a host can surface them in a debug console.
 struct MiniAppWebView: PlatformViewRepresentable {
     let source: String
     let initialData: String
@@ -42,14 +45,32 @@ struct MiniAppWebView: PlatformViewRepresentable {
     /// when their content is clamped to a max height; otherwise the host (list)
     /// scrolls and the web view is sized to fit.
     var scrollEnabled: Bool = true
+    /// Called for every captured `console.*` call, uncaught error, or unhandled
+    /// promise rejection from the running mini-app.
+    var onLog: ((MiniAppLogEntry) -> Void)? = nil
+    /// When true, inject the *development* React/ReactDOM builds instead of the
+    /// minified production ones. The dev builds emit full, readable warnings and
+    /// runtime error messages (the production builds replace them with coded
+    /// links), at the cost of size — used by the debug runner.
+    var useDevelopmentRuntime: Bool = false
 
     /// The full HTML document that actually loads, composed from `source`.
     private var document: String {
         MiniAppDocument.html(for: source, react: injectReact)
     }
 
+    /// A real (non-nil) origin for the loaded HTML. Loading with a `nil` baseURL
+    /// gives the page an opaque origin, which makes the browser sanitize all
+    /// script errors down to a bare "Script error." with no detail. A concrete
+    /// https origin keeps the mini-app's own scripts same-origin so uncaught
+    /// errors keep their real message and stack. Nothing is fetched from it.
+    private static let baseURL = URL(string: "https://miniapp.local/")
+
     func makeCoordinator() -> Coordinator {
-        Coordinator(initialData: initialData, onPersist: onPersist, onHeightChange: onHeightChange)
+        Coordinator(initialData: initialData,
+                    onPersist: onPersist,
+                    onHeightChange: onHeightChange,
+                    onLog: onLog)
     }
 
     #if os(macOS)
@@ -63,10 +84,20 @@ struct MiniAppWebView: PlatformViewRepresentable {
     private func makeWebView(context: Context) -> WKWebView {
         let controller = WKUserContentController()
 
+        // Console + error capture must run before any page or runtime script so
+        // it can catch React/Babel failures too. Only wire it up when a host
+        // actually wants the logs.
+        if onLog != nil {
+            controller.addUserScript(WKUserScript(source: consoleCaptureScript,
+                                                   injectionTime: .atDocumentStart,
+                                                   forMainFrameOnly: true))
+            controller.add(context.coordinator, name: "log")
+        }
+
         // React libraries first (UMD globals + Babel transpiler), then the
         // HostStorage bridge — all at document start, before the page's scripts.
         if injectReact {
-            for source in Self.reactRuntimeScripts() {
+            for source in Self.reactRuntimeScripts(development: useDevelopmentRuntime) {
                 controller.addUserScript(WKUserScript(source: source,
                                                        injectionTime: .atDocumentStart,
                                                        forMainFrameOnly: true))
@@ -97,7 +128,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
         webView.scrollView.isScrollEnabled = scrollEnabled
         #endif
         let document = self.document
-        webView.loadHTMLString(document, baseURL: nil)
+        webView.loadHTMLString(document, baseURL: Self.baseURL)
         context.coordinator.lastHTML = document
         return webView
     }
@@ -111,7 +142,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
         let document = self.document
         guard context.coordinator.lastHTML != document else { return }
         context.coordinator.lastHTML = document
-        webView.loadHTMLString(document, baseURL: nil)
+        webView.loadHTMLString(document, baseURL: Self.baseURL)
     }
 
     /// JS injected before the page loads: seeds saved data and exposes `HostStorage`.
@@ -130,6 +161,44 @@ struct MiniAppWebView: PlatformViewRepresentable {
                 removeItem: function (k) { delete data[k]; send({ op: "remove", key: k }); },
                 clear: function () { data = {}; send({ op: "clear" }); }
             };
+        })();
+        """
+    }
+
+    /// JS injected at document start: routes `console.*`, uncaught errors, and
+    /// unhandled promise rejections to the host so they can be shown in a console.
+    private var consoleCaptureScript: String {
+        """
+        (function () {
+            function post(level, args) {
+                try {
+                    var parts = Array.prototype.map.call(args, function (a) {
+                        if (a instanceof Error) return (a.stack || (a.name + ": " + a.message));
+                        if (typeof a === "object" && a !== null) {
+                            try { return JSON.stringify(a); } catch (e) { return String(a); }
+                        }
+                        return String(a);
+                    });
+                    window.webkit.messageHandlers.log.postMessage({ level: level, message: parts.join(" ") });
+                } catch (e) { /* never let logging break the app */ }
+            }
+            ["log", "info", "debug", "warn", "error"].forEach(function (name) {
+                var original = console[name] ? console[name].bind(console) : null;
+                console[name] = function () {
+                    post(name === "warn" ? "warning" : name, arguments);
+                    if (original) original.apply(console, arguments);
+                };
+            });
+            window.addEventListener("error", function (e) {
+                // Same-origin loads expose the real Error, including its stack.
+                if (e.error && e.error.stack) { post("error", [e.error.stack]); return; }
+                var where = e.filename ? (" (" + e.filename + ":" + e.lineno + ":" + e.colno + ")") : "";
+                post("error", [(e.message || "Script error") + where]);
+            });
+            window.addEventListener("unhandledrejection", function (e) {
+                var reason = e.reason && e.reason.message ? e.reason.message : e.reason;
+                post("error", ["Unhandled promise rejection: " + reason]);
+            });
         })();
         """
     }
@@ -154,13 +223,13 @@ struct MiniAppWebView: PlatformViewRepresentable {
     }
 
     /// Loads the bundled React runtime files (UMD React, ReactDOM, Babel) as
-    /// JS source strings, in load order. Missing files are skipped silently.
-    private static func reactRuntimeScripts() -> [String] {
-        let resources = [
-            "react.production.min",
-            "react-dom.production.min",
-            "babel.min"
-        ]
+    /// JS source strings, in load order. When `development` is true, the readable
+    /// development React builds are used instead of the minified production ones.
+    /// Missing files are skipped silently.
+    private static func reactRuntimeScripts(development: Bool) -> [String] {
+        let resources = development
+            ? ["react.development", "react-dom.development", "babel.min"]
+            : ["react.production.min", "react-dom.production.min", "babel.min"]
         return resources.compactMap { name in
             guard let url = Bundle.main.url(forResource: name, withExtension: "js"),
                   let source = try? String(contentsOf: url, encoding: .utf8) else {
@@ -175,13 +244,16 @@ struct MiniAppWebView: PlatformViewRepresentable {
         private var store: [String: String]
         private let onPersist: (String) -> Void
         private let onHeightChange: ((CGFloat) -> Void)?
+        private let onLog: ((MiniAppLogEntry) -> Void)?
         var lastHTML: String = ""
 
         init(initialData: String,
              onPersist: @escaping (String) -> Void,
-             onHeightChange: ((CGFloat) -> Void)?) {
+             onHeightChange: ((CGFloat) -> Void)?,
+             onLog: ((MiniAppLogEntry) -> Void)?) {
             self.onPersist = onPersist
             self.onHeightChange = onHeightChange
+            self.onLog = onLog
             if let data = initialData.data(using: .utf8),
                let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
                 self.store = parsed
@@ -196,6 +268,14 @@ struct MiniAppWebView: PlatformViewRepresentable {
                 if let height = message.body as? NSNumber {
                     onHeightChange?(CGFloat(height.doubleValue))
                 }
+                return
+            }
+
+            if message.name == "log" {
+                guard let body = message.body as? [String: Any],
+                      let level = body["level"] as? String,
+                      let text = body["message"] as? String else { return }
+                onLog?(MiniAppLogEntry(level: MiniAppLogEntry.Level(rawLevel: level), message: text))
                 return
             }
 

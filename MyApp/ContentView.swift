@@ -46,6 +46,8 @@ struct HomeView: View {
     /// A brand-new draft awaiting its first save. It isn't inserted into the
     /// model context until the user taps Save in the editor.
     @State private var newApp: MiniApp?
+    /// A mini-app to run modally with the debug console open.
+    @State private var debugApp: MiniApp?
 
     var body: some View {
         NavigationStack {
@@ -75,6 +77,11 @@ struct HomeView: View {
             .sheet(item: $newApp) { app in
                 NavigationStack {
                     MiniAppEditorView(app: app, isNew: true)
+                }
+            }
+            .sheet(item: $debugApp) { app in
+                NavigationStack {
+                    MiniAppRunnerView(app: app, startWithConsole: true)
                 }
             }
         }
@@ -107,6 +114,9 @@ struct HomeView: View {
                     .contextMenu {
                         Button { editingApp = app } label: {
                             Label("Edit", systemImage: "pencil")
+                        }
+                        Button { debugApp = app } label: {
+                            Label("Run with Console", systemImage: "ladybug")
                         }
                         Button(role: .destructive) { delete(app) } label: {
                             Label("Delete", systemImage: "trash")

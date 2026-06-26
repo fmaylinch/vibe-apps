@@ -62,8 +62,14 @@ enum MiniAppDocument {
     }
 
     /// Wraps a React fragment: hoists any `<style>` blocks into `<head>`, drops
-    /// the remaining JSX into a Babel script, and auto-mounts `<App/>` unless
-    /// the author already calls `createRoot`.
+    /// the remaining JSX into a script, and auto-mounts `<App/>` unless the author
+    /// already calls `createRoot`.
+    ///
+    /// Rather than letting Babel auto-run a `type="text/babel"` script (whose
+    /// failures surface only as an opaque "Script error."), the JSX is held in an
+    /// inert `text/plain` block and transpiled + executed inside a `try/catch`, so
+    /// Babel syntax errors and initial render errors are reported to the console
+    /// with their full message and stack.
     private static func wrapReact(_ fragment: String) -> String {
         let (styles, code) = extractStyles(fragment)
         let mount = code.contains("createRoot")
@@ -78,8 +84,19 @@ enum MiniAppDocument {
         </head>
         <body>
         <div id="root"></div>
-        <script type="text/babel">
+        <script type="text/plain" id="__miniapp_source__">
         \(code)\(mount)
+        </script>
+        <script>
+        (function () {
+            try {
+                var src = document.getElementById("__miniapp_source__").textContent;
+                var compiled = Babel.transform(src, { presets: ["react"] }).code;
+                (0, eval)(compiled);
+            } catch (err) {
+                console.error(err && err.stack ? err.stack : String(err));
+            }
+        })();
         </script>
         </body>
         </html>
