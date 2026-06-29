@@ -62,6 +62,11 @@ enum AICodeService {
                 return .unavailable(reason: "The on-device model is currently unavailable.")
             }
         case .privateCloudCompute:
+            // The Private Cloud Compute backend is only offered by Foundation Models
+            // on iOS 27 and later; on iOS 26 only the on-device model exists.
+            guard #available(iOS 27, *) else {
+                return .unavailable(reason: "Private Cloud Compute requires iOS 27 or later. Use the on-device model instead.")
+            }
             switch PrivateCloudComputeLanguageModel().availability {
             case .available:
                 return .available
@@ -113,7 +118,13 @@ enum AICodeService {
         case .onDevice:
             return LanguageModelSession(instructions: text)
         case .privateCloudCompute:
-            return LanguageModelSession(model: PrivateCloudComputeLanguageModel()) { text }
+            // Guarded so the app still builds and runs on iOS 26; callers gate on
+            // `availability(for:)`, which reports PCC as unavailable there.
+            if #available(iOS 27, *) {
+                return LanguageModelSession(model: PrivateCloudComputeLanguageModel()) { text }
+            } else {
+                return LanguageModelSession(instructions: text)
+            }
         }
     }
 
