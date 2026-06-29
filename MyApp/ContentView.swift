@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 @main struct VibeAppsApp: App {
     let container: ModelContainer
@@ -48,6 +49,13 @@ struct HomeView: View {
     @State private var newApp: MiniApp?
     /// A mini-app to run modally with the debug console open.
     @State private var debugApp: MiniApp?
+    /// Controls the "Import App" file importer (toolbar action → new app).
+    @State private var isImportingApp = false
+    /// The mini-app an "Import Data" action targets. Non-nil both records the
+    /// target and presents the data file importer.
+    @State private var dataImportTarget: MiniApp?
+    /// A user-facing import failure message, shown in an alert.
+    @State private var importError: String?
 
     var body: some View {
         NavigationStack {
@@ -65,6 +73,39 @@ struct HomeView: View {
                         Label("New Mini App", systemImage: "plus")
                     }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button { isImportingApp = true } label: {
+                            Label("Import from File…", systemImage: "folder")
+                        }
+                        // PasteButton reads the pasteboard with the user's tap as
+                        // consent, avoiding the silent-nil privacy gate that a
+                        // plain button hitting UIPasteboard.general would hit.
+                        PasteButton(payloadType: String.self) { strings in
+                            importApp(fromPasted: strings)
+                        }
+                    } label: {
+                        Label("Import App", systemImage: "square.and.arrow.down")
+                    }
+                }
+            }
+            .fileImporter(isPresented: $isImportingApp,
+                          allowedContentTypes: [.json]) { result in
+                handleImportApp(result)
+            }
+            .fileImporter(isPresented: Binding(
+                            get: { dataImportTarget != nil },
+                            set: { if !$0 { dataImportTarget = nil } }),
+                          allowedContentTypes: [.json]) { [target = dataImportTarget] result in
+                handleImportData(result, into: target)
+            }
+            .alert("Import Failed",
+                   isPresented: Binding(get: { importError != nil },
+                                        set: { if !$0 { importError = nil } }),
+                   presenting: importError) { _ in
+                Button("OK", role: .cancel) { importError = nil }
+            } message: { message in
+                Text(message)
             }
             .navigationDestination(for: MiniApp.self) { app in
                 MiniAppRunnerView(app: app)
@@ -118,6 +159,36 @@ struct HomeView: View {
                         Button { debugApp = app } label: {
                             Label("Run with Console", systemImage: "ladybug")
                         }
+
+                        Divider()
+
+                        if let file = try? MiniAppExportFile.appBundle(for: app) {
+                            ShareLink(item: file, preview: SharePreview(file.filename)) {
+                                Label("Export App", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                        if let file = try? MiniAppExportFile.dataExport(for: app) {
+                            ShareLink(item: file, preview: SharePreview(file.filename)) {
+                                Label("Export Data", systemImage: "square.and.arrow.up.on.square")
+                            }
+                        }
+                        Menu {
+                            Button { dataImportTarget = app } label: {
+                                Label("From File…", systemImage: "folder")
+                            }
+                            // Must be a PasteButton, not a plain Button reading
+                            // UIPasteboard: the user's tap is the pasteboard
+                            // access consent, so it avoids the privacy gate that
+                            // makes a programmatic read silently return nil.
+                            PasteButton(payloadType: String.self) { strings in
+                                importData(fromPasted: strings, into: app)
+                            }
+                        } label: {
+                            Label("Import Data into this App", systemImage: "square.and.arrow.down")
+                        }
+
+                        Divider()
+
                         Button(role: .destructive) { delete(app) } label: {
                             Label("Delete", systemImage: "trash")
                         }
@@ -166,6 +237,94 @@ struct HomeView: View {
 
     private func delete(_ app: MiniApp) {
         context.delete(app)
+    }
+
+    /// Imports a full app bundle as a brand-new mini-app.
+    private func handleImportApp(_ result: Result<URL, Error>) {
+        switch result {
+        case .failure(let error):
+            reportImportFailure(error)
+        case .success(let url):
+            do {
+                let data = try readSecurityScoped(url)
+                let bundle = try MiniAppExportCoder.decodeBundle(data)
+                context.insert(bundle.makeMiniApp())
+            } catch {
+                importError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Imports a data-only export, replacing `target`'s storage.
+    private func handleImportData(_ result: Result<URL, Error>, into target: MiniApp?) {
+        guard let target else { return }
+        switch result {
+        case .failure(let error):
+            reportImportFailure(error)
+        case .success(let url):
+            do {
+                let data = try readSecurityScoped(url)
+                let export = try MiniAppExportCoder.decodeDataExport(data)
+                target.storageJSON = export.resolvedStorageJSON
+                target.updatedAt = .now
+            } catch {
+                importError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Imports a full app bundle from JSON pasted via a `PasteButton`.
+    private func importApp(fromPasted strings: [String]) {
+        guard let data = pastedJSONData(strings) else { return }
+        do {
+            let bundle = try MiniAppExportCoder.decodeBundle(data)
+            context.insert(bundle.makeMiniApp())
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
+
+    /// Imports a data-only export from JSON pasted via a `PasteButton`,
+    /// replacing `target`'s storage.
+    private func importData(fromPasted strings: [String], into target: MiniApp) {
+        guard let data = pastedJSONData(strings) else { return }
+        do {
+            let export = try MiniAppExportCoder.decodeDataExport(data)
+            target.storageJSON = export.resolvedStorageJSON
+            target.updatedAt = .now
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
+
+    /// The first non-empty pasted string as UTF-8 data, or `nil` (surfacing an
+    /// error) when the pasteboard yielded nothing usable.
+    private func pastedJSONData(_ strings: [String]) -> Data? {
+        guard let text = strings.first(where: { !$0.isEmpty }),
+              let data = text.data(using: .utf8) else {
+            importError = "The clipboard doesn’t contain a Mini App to import. Copy an exported app or its data first."
+            return nil
+        }
+        return data
+    }
+
+    /// Surfaces an importer error, but stays silent when the user just cancelled.
+    private func reportImportFailure(_ error: Error) {
+        if (error as NSError).code != NSUserCancelledError {
+            importError = error.localizedDescription
+        }
+    }
+
+    /// Reads a file handed to us by `.fileImporter`, honoring security-scoped
+    /// access required for files outside the app sandbox.
+    private func readSecurityScoped(_ url: URL) throws -> Data {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            return try Data(contentsOf: url)
+        } catch {
+            throw MiniAppImportError.unreadable
+        }
     }
 }
 
@@ -225,6 +384,13 @@ private struct InlineMiniAppView: View {
             },
             scrollEnabled: isCapped
         )
+        // The web view seeds its storage once at creation, so an external data
+        // change (import, or an edit in the editor) wouldn't otherwise show up
+        // in a live inline mini-app until the view is rebuilt. Keying on
+        // `updatedAt` rebuilds it then — but NOT on the web view's own
+        // `setItem` persistence, which updates `storageJSON` without touching
+        // `updatedAt`, so ordinary interaction keeps its state.
+        .id(app.updatedAt)
         .frame(height: frameHeight)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
