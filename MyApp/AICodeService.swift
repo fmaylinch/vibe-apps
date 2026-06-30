@@ -135,7 +135,7 @@ enum AICodeService {
         You write small, self-contained mini-apps that run in a web view. \
         Output ONLY the source code — no Markdown fences, no prose, no explanation of your changes. \
         Do NOT include <html>, <head>, or <body> tags; the host adds those for you. \
-        Persist data with HostStorage.getItem(key) and HostStorage.setItem(key, value); both use string values.
+        Persist data with HostStorage.getItem(key) and HostStorage.setItem(key, value); values can be any JSON (objects, arrays, numbers, strings) — no JSON.parse/stringify needed.
         """
         switch framework {
         case .vanilla:
@@ -155,8 +155,8 @@ enum AICodeService {
             const KEY = "items";
 
             function App() {
-              const [items, setItems] = useState(JSON.parse(HostStorage.getItem(KEY) || "[]"));
-              function save(next) { setItems(next); HostStorage.setItem(KEY, JSON.stringify(next)); }
+              const [items, setItems] = useState(HostStorage.getItem(KEY) || []);
+              function save(next) { setItems(next); HostStorage.setItem(KEY, next); }
               return (
                 <div>
                   {items.map((it, i) => <div key={i}>{it}</div>)}

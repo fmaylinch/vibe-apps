@@ -13,8 +13,8 @@ typealias PlatformViewRepresentable = UIViewRepresentable
 /// `HostStorage` key-value API back to native persistence.
 ///
 /// Mini-app JavaScript can call:
-///   HostStorage.getItem(key)        -> String | null
-///   HostStorage.setItem(key, value) -> persists across launches
+///   HostStorage.getItem(key)        -> any JSON value (object/array/number/string/bool) | null
+///   HostStorage.setItem(key, value) -> persists any JSON value across launches
 ///   HostStorage.removeItem(key)
 ///   HostStorage.clear()
 ///
@@ -157,7 +157,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
                 getItem: function (k) {
                     return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null;
                 },
-                setItem: function (k, v) { data[k] = String(v); send({ op: "set", key: k, value: String(v) }); },
+                setItem: function (k, v) { data[k] = v; send({ op: "set", key: k, value: v }); },
                 removeItem: function (k) { delete data[k]; send({ op: "remove", key: k }); },
                 clear: function () { data = {}; send({ op: "clear" }); }
             };
@@ -241,7 +241,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler {
-        private var store: [String: String]
+        private var store: [String: Any]
         private let onPersist: (String) -> Void
         private let onHeightChange: ((CGFloat) -> Void)?
         private let onLog: ((MiniAppLogEntry) -> Void)?
@@ -255,7 +255,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
             self.onHeightChange = onHeightChange
             self.onLog = onLog
             if let data = initialData.data(using: .utf8),
-               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 self.store = parsed
             } else {
                 self.store = [:]
@@ -283,8 +283,10 @@ struct MiniAppWebView: PlatformViewRepresentable {
                   let op = body["op"] as? String else { return }
             switch op {
             case "set":
-                if let key = body["key"] as? String, let value = body["value"] as? String {
-                    store[key] = value
+                // Value may be any JSON type (object/array/number/string/bool/null);
+                // a missing value (e.g. setItem(k, undefined)) is stored as null.
+                if let key = body["key"] as? String {
+                    store[key] = body["value"] ?? NSNull()
                 }
             case "remove":
                 if let key = body["key"] as? String { store.removeValue(forKey: key) }

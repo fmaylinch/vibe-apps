@@ -58,6 +58,33 @@ nonisolated enum JSONValue: Codable, Equatable {
         guard let data = try? JSONEncoder().encode(self) else { return nil }
         return String(data: data, encoding: .utf8)
     }
+
+    /// Whether this value is a nested container (object or array).
+    var isContainer: Bool {
+        switch self {
+        case .object, .array: return true
+        default: return false
+        }
+    }
+
+    /// Expands the storage map's string values that are themselves JSON
+    /// containers into native nested JSON — turning a legacy double-encoded
+    /// blob like `{"todos":"[...]"}` into `{"todos":[...]}`. Plain (non-JSON)
+    /// string values are left untouched. Used by `MiniApp.migrateStorageIfNeeded()`
+    /// to upgrade saved data to the native-JSON storage format.
+    func expandingStorageValues() -> JSONValue {
+        guard case .object(let dict) = self else { return self }
+        var result: [String: JSONValue] = [:]
+        for (key, value) in dict {
+            if case .string(let raw) = value,
+               let parsed = JSONValue.parse(raw), parsed.isContainer {
+                result[key] = parsed
+            } else {
+                result[key] = value
+            }
+        }
+        return .object(result)
+    }
 }
 
 // MARK: - Export file shapes
@@ -110,7 +137,9 @@ nonisolated struct MiniAppBundle: Codable {
 
     /// The compact `storageJSON` string to give a reconstructed `MiniApp`.
     var resolvedStorageJSON: String {
-        if let storage, let string = storage.compactString() { return string }
+        if let storage, let string = storage.compactString() {
+            return string
+        }
         if let storageRaw { return storageRaw }
         return "{}"
     }
@@ -151,7 +180,9 @@ nonisolated struct MiniAppDataExport: Codable {
 
     /// The compact `storageJSON` string to assign back to a mini-app.
     var resolvedStorageJSON: String {
-        if let storage, let string = storage.compactString() { return string }
+        if let storage, let string = storage.compactString() {
+            return string
+        }
         if let storageRaw { return storageRaw }
         return "{}"
     }

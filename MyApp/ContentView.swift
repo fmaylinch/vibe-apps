@@ -107,6 +107,12 @@ struct HomeView: View {
             } message: { message in
                 Text(message)
             }
+            // Upgrade any legacy double-encoded storage to the native-JSON
+            // format before a mini-app's web view seeds from it. Re-runs as
+            // CloudKit-synced rows arrive; each app migrates at most once.
+            .task(id: miniApps.map(\.persistentModelID)) {
+                for app in miniApps { app.migrateStorageIfNeeded() }
+            }
             .navigationDestination(for: MiniApp.self) { app in
                 MiniAppRunnerView(app: app)
             }
@@ -266,6 +272,7 @@ struct HomeView: View {
                 let data = try readSecurityScoped(url)
                 let export = try MiniAppExportCoder.decodeDataExport(data)
                 target.storageJSON = export.resolvedStorageJSON
+                target.storageFormatVersion = MiniApp.currentStorageFormatVersion
                 target.updatedAt = .now
             } catch {
                 importError = error.localizedDescription
@@ -291,6 +298,7 @@ struct HomeView: View {
         do {
             let export = try MiniAppExportCoder.decodeDataExport(data)
             target.storageJSON = export.resolvedStorageJSON
+            target.storageFormatVersion = MiniApp.currentStorageFormatVersion
             target.updatedAt = .now
         } catch {
             importError = error.localizedDescription

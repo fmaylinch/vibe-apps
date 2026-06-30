@@ -30,9 +30,9 @@ enum MiniAppTemplate {
 
     <script>
       var KEY = "todos";
-      var todos = JSON.parse(HostStorage.getItem(KEY) || "[]");
+      var todos = HostStorage.getItem(KEY) || [];
 
-      function save() { HostStorage.setItem(KEY, JSON.stringify(todos)); }
+      function save() { HostStorage.setItem(KEY, todos); }
 
       function render() {
         var list = document.getElementById("list");
@@ -83,11 +83,11 @@ enum MiniAppTemplate {
     const KEY = "count";
 
     function App() {
-      const [count, setCount] = useState(Number(HostStorage.getItem(KEY) || "0"));
+      const [count, setCount] = useState(HostStorage.getItem(KEY) || 0);
 
       function update(next) {
         setCount(next);
-        HostStorage.setItem(KEY, String(next));
+        HostStorage.setItem(KEY, next);
       }
 
       return (

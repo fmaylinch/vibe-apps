@@ -182,7 +182,7 @@ struct MiniAppEditorView: View {
     }
 
     private var footnote: String {
-        let storage = "Persist data with HostStorage.getItem(key) / HostStorage.setItem(key, value)."
+        let storage = "Persist data with HostStorage.getItem(key) / HostStorage.setItem(key, value) — values can be any JSON (objects, arrays, numbers)."
         switch MiniAppFramework(rawValue: app.framework) ?? .vanilla {
         case .vanilla:
             return storage + " No need for <html> or <head> — just write body markup, <style>, and <script>. (A full HTML document still works if you write one.)"
