@@ -90,13 +90,13 @@ struct HomeView: View {
                 }
             }
             .fileImporter(isPresented: $isImportingApp,
-                          allowedContentTypes: [.json]) { result in
+                          allowedContentTypes: [.item]) { result in
                 handleImportApp(result)
             }
             .fileImporter(isPresented: Binding(
                             get: { dataImportTarget != nil },
                             set: { if !$0 { dataImportTarget = nil } }),
-                          allowedContentTypes: [.json]) { [target = dataImportTarget] result in
+                          allowedContentTypes: [.item]) { [target = dataImportTarget] result in
                 handleImportData(result, into: target)
             }
             .alert("Import Failed",
@@ -286,9 +286,9 @@ struct HomeView: View {
         }
     }
 
-    /// Imports a full app bundle from JSON pasted via a `PasteButton`.
+    /// Imports a full app bundle pasted via a `PasteButton`.
     private func importApp(fromPasted strings: [String]) {
-        guard let data = pastedJSONData(strings) else { return }
+        guard let data = pastedExportData(strings) else { return }
         do {
             let bundle = try MiniAppExportCoder.decodeBundle(data)
             context.insert(bundle.makeMiniApp())
@@ -297,10 +297,10 @@ struct HomeView: View {
         }
     }
 
-    /// Imports a data-only export from JSON pasted via a `PasteButton`,
+    /// Imports a data-only export pasted via a `PasteButton`,
     /// replacing `target`'s storage.
     private func importData(fromPasted strings: [String], into target: MiniApp) {
-        guard let data = pastedJSONData(strings) else { return }
+        guard let data = pastedExportData(strings) else { return }
         do {
             let export = try MiniAppExportCoder.decodeDataExport(data)
             target.storageJSON = export.resolvedStorageJSON
@@ -313,7 +313,7 @@ struct HomeView: View {
 
     /// The first non-empty pasted string as UTF-8 data, or `nil` (surfacing an
     /// error) when the pasteboard yielded nothing usable.
-    private func pastedJSONData(_ strings: [String]) -> Data? {
+    private func pastedExportData(_ strings: [String]) -> Data? {
         guard let text = strings.first(where: { !$0.isEmpty }),
               let data = text.data(using: .utf8) else {
             importError = "The clipboard doesn’t contain a Mini App to import. Copy an exported app or its data first."

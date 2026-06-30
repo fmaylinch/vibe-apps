@@ -3,9 +3,8 @@ import UniformTypeIdentifiers
 
 // MARK: - JSONValue
 
-/// A fully `Codable` stand-in for arbitrary JSON. Used so a mini-app's
-/// `storageJSON` blob can be embedded in an export file as a readable nested
-/// object instead of an escaped string.
+/// A fully `Codable` stand-in for arbitrary JSON, used to parse and serialize
+/// a mini-app's runtime storage.
 nonisolated enum JSONValue: Codable, Equatable {
     case string(String)
     case number(Double)
@@ -87,27 +86,19 @@ nonisolated enum JSONValue: Codable, Equatable {
     }
 }
 
-// MARK: - Export file shapes
+// MARK: - Export models
 
 /// Discriminates the two export file shapes so each importer can reject the
 /// wrong file with a clear message.
-enum MiniAppExportKind: String, Codable {
+enum MiniAppExportKind: String {
     /// Full bundle (code + data) — importing creates a new mini-app.
     case app
     /// Storage only — importing replaces an existing mini-app's data.
     case data
 }
 
-/// Current on-disk format version. Bump when the shape changes incompatibly.
-nonisolated enum MiniAppExportFormat {
-    static let currentVersion = 1
-}
-
 /// The full export of a mini-app: everything needed to recreate it.
-nonisolated struct MiniAppBundle: Codable {
-    var formatVersion: Int = MiniAppExportFormat.currentVersion
-    var kind: MiniAppExportKind = .app
-
+nonisolated struct MiniAppBundle {
     var name: String
     var icon: String
     var framework: String
@@ -118,22 +109,6 @@ nonisolated struct MiniAppBundle: Codable {
     var storageRaw: String?
     var isInline: Bool
     var inlineMaxHeight: Double?
-
-    init(from app: MiniApp) {
-        name = app.name
-        icon = app.icon
-        framework = app.framework
-        source = app.source
-        isInline = app.isInline
-        inlineMaxHeight = app.inlineMaxHeight
-        if let parsed = JSONValue.parse(app.storageJSON) {
-            storage = parsed
-            storageRaw = nil
-        } else {
-            storage = nil
-            storageRaw = app.storageJSON
-        }
-    }
 
     /// The compact `storageJSON` string to give a reconstructed `MiniApp`.
     var resolvedStorageJSON: String {
@@ -161,22 +136,9 @@ nonisolated struct MiniAppBundle: Codable {
 }
 
 /// The data-only export: just a mini-app's runtime storage blob.
-nonisolated struct MiniAppDataExport: Codable {
-    var formatVersion: Int = MiniAppExportFormat.currentVersion
-    var kind: MiniAppExportKind = .data
-
+nonisolated struct MiniAppDataExport {
     var storage: JSONValue?
     var storageRaw: String?
-
-    init(storageJSON: String) {
-        if let parsed = JSONValue.parse(storageJSON) {
-            storage = parsed
-            storageRaw = nil
-        } else {
-            storage = nil
-            storageRaw = storageJSON
-        }
-    }
 
     /// The compact `storageJSON` string to assign back to a mini-app.
     var resolvedStorageJSON: String {
@@ -192,16 +154,21 @@ nonisolated struct MiniAppDataExport: Codable {
 
 enum MiniAppImportError: LocalizedError {
     case unreadable
-    case notMiniAppJSON
+    case missingMetadata
+    case missingStorage
+    case invalidStorage
     case wrongKind(expected: MiniAppExportKind, found: MiniAppExportKind)
-    case unsupportedVersion(Int)
 
     var errorDescription: String? {
         switch self {
         case .unreadable:
             return "This file couldn’t be read."
-        case .notMiniAppJSON:
-            return "This isn’t a Mini App export file."
+        case .missingMetadata:
+            return "This code file is missing its Mini App metadata. Add @name and @type to the comment at the beginning."
+        case .missingStorage:
+            return "This file doesn’t contain a const STORAGE value."
+        case .invalidStorage:
+            return "The const STORAGE value isn’t valid JSON."
         case .wrongKind(let expected, let found):
             switch (expected, found) {
             case (.app, .data):
@@ -211,71 +178,427 @@ enum MiniAppImportError: LocalizedError {
             default:
                 return "This file is the wrong type for this action."
             }
-        case .unsupportedVersion(let version):
-            return "This file uses a newer format (version \(version)) than this app understands. Update the app and try again."
         }
     }
 }
 
-// MARK: - Encoding / decoding
+// MARK: - Code-file encoding / decoding
 
 enum MiniAppExportCoder {
-    static func encode<T: Encodable>(_ value: T) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(value)
+    private static let storageMarker = "@miniapp-storage"
+
+    /// Encodes a complete app as an editable HTML or JSX source file.
+    static func encodeBundle(_ app: MiniApp) throws -> Data {
+        let framework = MiniAppFramework(rawValue: app.framework) ?? .vanilla
+        let storage = serializedStorage(app.storageJSON)
+        let metadata = metadataLines(
+            for: app, framework: framework, storageIsRaw: storage.isRaw
+        )
+        let text: String
+
+        switch framework {
+        case .react:
+            let header = metadata.map { "// \($0)" }.joined(separator: "\n")
+            text = """
+            \(header)
+
+            // Globals: React, db
+            // Define an App component; it will be automatically mounted.
+            // @miniapp-source
+
+            \(app.source.trimmingCharacters(in: .newlines))
+
+            // \(storageMarker)
+            const STORAGE = \(storage.text);
+            """
+        case .vanilla:
+            let header = metadata.joined(separator: "\n")
+            text = """
+            <!--
+            \(header)
+
+            Globals: db
+            -->
+
+            \(app.source.trimmingCharacters(in: .newlines))
+
+            <script data-miniapp-storage>
+              // \(storageMarker)
+              const STORAGE = \(storage.text);
+            </script>
+            """
+        }
+        return Data((text + "\n").utf8)
     }
 
-    /// Decodes a full app bundle, validating kind and version.
+    /// Encodes storage by itself as a small JavaScript file.
+    static func encodeDataExport(_ app: MiniApp) throws -> Data {
+        let storage = serializedStorage(app.storageJSON)
+        let rawMetadata = storage.isRaw ? "\n// @storage-encoding raw" : ""
+        let text = """
+        // @name \(singleLine(app.name))
+        // @kind data\(rawMetadata)
+
+        // \(storageMarker)
+        const STORAGE = \(storage.text);
+        """
+        return Data((text + "\n").utf8)
+    }
+
+    /// Decodes a complete code-file export.
     static func decodeBundle(_ data: Data) throws -> MiniAppBundle {
-        try decode(data, expecting: .app)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw MiniAppImportError.unreadable
+        }
+        let parsed = try parseCodeFile(text)
+        guard parsed.kind == .app else {
+            throw MiniAppImportError.wrongKind(expected: .app, found: parsed.kind)
+        }
+        guard let name = parsed.metadata["name"],
+              let type = parsed.metadata["type"],
+              let framework = MiniAppFramework(rawValue: type) else {
+            throw MiniAppImportError.missingMetadata
+        }
+
+        return MiniAppBundle(
+            name: name,
+            icon: parsed.metadata["icon"] ?? "✨",
+            framework: framework.rawValue,
+            source: parsed.source,
+            storage: parsed.storageRaw == nil ? parsed.storage : nil,
+            storageRaw: parsed.storageRaw,
+            isInline: parsed.metadata["inline"].flatMap(Bool.init) ?? false,
+            inlineMaxHeight: parsed.metadata["inline-max-height"].flatMap(Double.init)
+        )
     }
 
-    /// Decodes a data-only export, validating kind and version.
+    /// Decodes a storage-only code file.
     static func decodeDataExport(_ data: Data) throws -> MiniAppDataExport {
-        try decode(data, expecting: .data)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw MiniAppImportError.unreadable
+        }
+        let parsed = try parseCodeFile(text)
+        guard parsed.kind == .data else {
+            throw MiniAppImportError.wrongKind(expected: .data, found: parsed.kind)
+        }
+        return MiniAppDataExport(
+            storage: parsed.storageRaw == nil ? parsed.storage : nil,
+            storageRaw: parsed.storageRaw
+        )
     }
 
-    /// Minimal header used to validate a file before fully decoding it.
-    private struct Envelope: Decodable {
-        var formatVersion: Int?
-        var kind: MiniAppExportKind?
+    private struct ParsedCodeFile {
+        var kind: MiniAppExportKind
+        var metadata: [String: String]
+        var source: String
+        var storage: JSONValue
+        var storageRaw: String?
     }
 
-    private static func decode<T: Decodable>(
-        _ data: Data, expecting kind: MiniAppExportKind
-    ) throws -> T {
-        // Peek at the envelope first for precise wrong-kind / version errors.
-        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data),
-              let foundKind = envelope.kind else {
-            throw MiniAppImportError.notMiniAppJSON
+    private static func parseCodeFile(_ text: String) throws -> ParsedCodeFile {
+        let text = text.hasPrefix("\u{feff}") ? String(text.dropFirst()) : text
+        let isHTML = text.drop(while: { $0.isWhitespace }).hasPrefix("<!--")
+        let header = isHTML ? htmlHeader(in: text) : lineCommentHeader(in: text)
+        let metadata = parseMetadata(header.text)
+        let kind: MiniAppExportKind
+        if metadata["kind"] == "data" {
+            kind = .data
+        } else if metadata["type"] != nil || metadata["name"] != nil {
+            kind = .app
+        } else {
+            // A bare `const STORAGE = ...` file is a convenient valid
+            // data-only import even without a metadata header.
+            kind = .data
         }
-        guard foundKind == kind else {
-            throw MiniAppImportError.wrongKind(expected: kind, found: foundKind)
+
+        let body = String(text[header.bodyStart...])
+        let extraction = try isHTML
+            ? extractHTMLStorage(from: body)
+            : extractJavaScriptStorage(from: body)
+        let storageRaw: String?
+        if metadata["storage-encoding"] == "raw",
+           case .string(let raw) = extraction.storage {
+            storageRaw = raw
+        } else {
+            storageRaw = nil
         }
-        if let version = envelope.formatVersion, version > MiniAppExportFormat.currentVersion {
-            throw MiniAppImportError.unsupportedVersion(version)
-        }
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw MiniAppImportError.notMiniAppJSON
-        }
+        return ParsedCodeFile(
+            kind: kind,
+            metadata: metadata,
+            source: extraction.source.trimmingCharacters(in: .whitespacesAndNewlines),
+            storage: extraction.storage,
+            storageRaw: storageRaw
+        )
     }
+
+    private static func metadataLines(
+        for app: MiniApp, framework: MiniAppFramework, storageIsRaw: Bool
+    ) -> [String] {
+        var lines = [
+            "@name \(singleLine(app.name))",
+            "@type \(framework.rawValue)",
+            "@icon \(singleLine(app.icon))"
+        ]
+        if app.isInline { lines.append("@inline true") }
+        if let height = app.inlineMaxHeight {
+            lines.append("@inline-max-height \(height.formatted(.number.grouping(.never)))")
+        }
+        if storageIsRaw { lines.append("@storage-encoding raw") }
+        return lines
+    }
+
+    private static func singleLine(_ value: String) -> String {
+        value.components(separatedBy: .newlines).joined(separator: " ")
+    }
+
+    private static func serializedStorage(
+        _ storageJSON: String
+    ) -> (text: String, isRaw: Bool) {
+        guard let data = storageJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+              let pretty = try? JSONSerialization.data(
+                withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed]
+              ),
+              let string = String(data: pretty, encoding: .utf8) else {
+            // Invalid legacy blobs are preserved as a JSON string.
+            let encoded = try? JSONEncoder().encode(storageJSON)
+            let string = encoded.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+            return (string, true)
+        }
+        return (string, false)
+    }
+
+    private static func parseMetadata(_ header: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for rawLine in header.components(separatedBy: .newlines) {
+            var line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("//") {
+                line.removeFirst(2)
+                line = line.trimmingCharacters(in: .whitespaces)
+            }
+            guard line.hasPrefix("@") else { continue }
+            line.removeFirst()
+            let pieces = line.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+            guard pieces.count == 2 else { continue }
+            result[String(pieces[0]).lowercased()] =
+                String(pieces[1]).trimmingCharacters(in: .whitespaces)
+        }
+        return result
+    }
+
+    private static func lineCommentHeader(
+        in text: String
+    ) -> (text: String, bodyStart: String.Index) {
+        var cursor = text.startIndex
+        var end = cursor
+        var sawComment = false
+        while cursor < text.endIndex {
+            let lineEnd = text[cursor...].firstIndex(of: "\n") ?? text.endIndex
+            let line = text[cursor..<lineEnd].trimmingCharacters(in: .whitespaces)
+            if line == "// @miniapp-source" {
+                let bodyStart = lineEnd < text.endIndex ? text.index(after: lineEnd) : lineEnd
+                return (String(text[..<cursor]), bodyStart)
+            }
+            if line.hasPrefix("//") {
+                sawComment = true
+                end = lineEnd < text.endIndex ? text.index(after: lineEnd) : lineEnd
+            } else if line.isEmpty, sawComment {
+                end = lineEnd < text.endIndex ? text.index(after: lineEnd) : lineEnd
+            } else {
+                break
+            }
+            cursor = lineEnd < text.endIndex ? text.index(after: lineEnd) : lineEnd
+        }
+        return (String(text[..<end]), end)
+    }
+
+    private static func htmlHeader(
+        in text: String
+    ) -> (text: String, bodyStart: String.Index) {
+        let start = text.range(of: "<!--")!
+        guard let close = text.range(of: "-->", range: start.upperBound..<text.endIndex) else {
+            return ("", text.startIndex)
+        }
+        var bodyStart = close.upperBound
+        while bodyStart < text.endIndex, text[bodyStart].isWhitespace {
+            bodyStart = text.index(after: bodyStart)
+        }
+        return (String(text[start.upperBound..<close.lowerBound]), bodyStart)
+    }
+
+    private static func extractHTMLStorage(
+        from body: String
+    ) throws -> (source: String, storage: JSONValue) {
+        // Prefer the marked storage script emitted by this app.
+        if let marker = body.range(of: "data-miniapp-storage", options: .backwards),
+           let open = body[..<marker.lowerBound].range(of: "<script", options: .backwards),
+           let openEnd = body[marker.upperBound...].firstIndex(of: ">"),
+           let close = body.range(
+                of: "</script>", options: [.caseInsensitive],
+                range: openEnd..<body.endIndex
+           ) {
+            let script = String(body[body.index(after: openEnd)..<close.lowerBound])
+            let storage = try parseStorageDeclaration(in: script).storage
+            var source = body
+            source.removeSubrange(open.lowerBound..<close.upperBound)
+            return (source, storage)
+        }
+
+        // Also accept the simpler documented form: a separate script whose
+        // contents include `const STORAGE = ...`.
+        var searchEnd = body.endIndex
+        while let close = body.range(
+            of: "</script>", options: [.backwards, .caseInsensitive],
+            range: body.startIndex..<searchEnd
+        ), let open = body.range(
+            of: "<script", options: [.backwards, .caseInsensitive],
+            range: body.startIndex..<close.lowerBound
+        ), let openEnd = body[open.lowerBound..<close.lowerBound].firstIndex(of: ">") {
+            let script = String(body[body.index(after: openEnd)..<close.lowerBound])
+            if let declaration = try? parseStorageDeclaration(in: script) {
+                var source = body
+                source.removeSubrange(open.lowerBound..<close.upperBound)
+                return (source, declaration.storage)
+            }
+            searchEnd = open.lowerBound
+        }
+        throw MiniAppImportError.missingStorage
+    }
+
+    private static func extractJavaScriptStorage(
+        from body: String
+    ) throws -> (source: String, storage: JSONValue) {
+        let declaration = try parseStorageDeclaration(in: body)
+        var source = body
+        source.removeSubrange(declaration.range)
+
+        // Remove our marker when present. It deliberately sits immediately
+        // before the declaration and is not part of the mini-app source.
+        if let marker = source.range(of: "// \(storageMarker)", options: .backwards) {
+            source.removeSubrange(marker)
+        }
+        return (source, declaration.storage)
+    }
+
+    private static func parseStorageDeclaration(
+        in text: String
+    ) throws -> (storage: JSONValue, range: Range<String.Index>) {
+        guard let nameRange = lastRegexRange(
+            #"const\s+STORAGE\s*="#, in: text
+        ) else {
+            throw MiniAppImportError.missingStorage
+        }
+
+        var valueStart = nameRange.upperBound
+        while valueStart < text.endIndex, text[valueStart].isWhitespace {
+            valueStart = text.index(after: valueStart)
+        }
+        guard let valueEnd = jsonValueEnd(in: text, from: valueStart) else {
+            throw MiniAppImportError.invalidStorage
+        }
+        let json = String(text[valueStart..<valueEnd])
+        guard let storage = JSONValue.parse(json) else {
+            throw MiniAppImportError.invalidStorage
+        }
+        var declarationEnd = valueEnd
+        while declarationEnd < text.endIndex, text[declarationEnd].isWhitespace {
+            declarationEnd = text.index(after: declarationEnd)
+        }
+        if declarationEnd < text.endIndex, text[declarationEnd] == ";" {
+            declarationEnd = text.index(after: declarationEnd)
+        }
+        return (storage, nameRange.lowerBound..<declarationEnd)
+    }
+
+    private static func lastRegexRange(
+        _ pattern: String, in text: String
+    ) -> Range<String.Index>? {
+        var searchStart = text.startIndex
+        var lastMatch: Range<String.Index>?
+        while searchStart < text.endIndex,
+              let match = text.range(
+                of: pattern,
+                options: .regularExpression,
+                range: searchStart..<text.endIndex
+              ) {
+            lastMatch = match
+            searchStart = match.upperBound
+        }
+        return lastMatch
+    }
+
+    /// Finds the end of a JSON value without treating braces inside strings as
+    /// delimiters. Exported storage is normally an object, but fragments are
+    /// supported so malformed legacy blobs can still round-trip as strings.
+    private static func jsonValueEnd(
+        in text: String, from start: String.Index
+    ) -> String.Index? {
+        guard start < text.endIndex else { return nil }
+        let first = text[start]
+        if first == "\"" {
+            var index = text.index(after: start)
+            var escaped = false
+            while index < text.endIndex {
+                let character = text[index]
+                if character == "\"", !escaped { return text.index(after: index) }
+                if character == "\\", !escaped {
+                    escaped = true
+                } else {
+                    escaped = false
+                }
+                index = text.index(after: index)
+            }
+            return nil
+        }
+        if first == "{" || first == "[" {
+            var index = start
+            var stack: [Character] = []
+            var inString = false
+            var escaped = false
+            while index < text.endIndex {
+                let character = text[index]
+                if inString {
+                    if character == "\"", !escaped { inString = false }
+                    if character == "\\", !escaped { escaped = true } else { escaped = false }
+                } else if character == "\"" {
+                    inString = true
+                } else if character == "{" || character == "[" {
+                    stack.append(character)
+                } else if character == "}" || character == "]" {
+                    guard let opening = stack.popLast(),
+                          (opening == "{" && character == "}") ||
+                          (opening == "[" && character == "]") else { return nil }
+                    if stack.isEmpty { return text.index(after: index) }
+                }
+                index = text.index(after: index)
+            }
+            return nil
+        }
+
+        var end = start
+        while end < text.endIndex, text[end] != ";", text[end] != "\n",
+              text[end] != "<" {
+            end = text.index(after: end)
+        }
+        while end > start, text[text.index(before: end)].isWhitespace {
+            end = text.index(before: end)
+        }
+        return end > start ? end : nil
+    }
+
 }
 
 // MARK: - Transferable file for ShareLink
 
-/// A `Transferable` wrapper so a mini-app export can be shared as a JSON file
-/// with a sensible filename (e.g. "TodoList.miniapp.json").
+/// A `Transferable` wrapper so a mini-app export can be shared with a sensible
+/// code-file name (e.g. "TodoList.jsx").
 struct MiniAppExportFile: Transferable {
     let data: Data
-    /// The full filename, e.g. "TodoList.miniapp.json".
+    /// The full filename, e.g. "TodoList.jsx".
     let filename: String
 
     static var transferRepresentation: some TransferRepresentation {
-        // File targets (Save to Files, AirDrop, Mail) get a named .json file.
-        FileRepresentation(exportedContentType: .json) { file in
+        FileRepresentation(exportedContentType: .plainText) { file in
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent(file.filename)
             try file.data.write(to: url, options: .atomic)
@@ -283,7 +606,7 @@ struct MiniAppExportFile: Transferable {
         }
         .suggestedFileName { $0.filename }
 
-        // Text targets (Copy, Messages, Notes) get the raw JSON as plain text.
+        // Text targets (Copy, Messages, Notes) get the editable source.
         ProxyRepresentation { file in
             String(decoding: file.data, as: UTF8.self)
         }
@@ -301,13 +624,15 @@ struct MiniAppExportFile: Transferable {
 
     /// A full app bundle (code + data) for `app`.
     static func appBundle(for app: MiniApp) throws -> MiniAppExportFile {
-        let data = try MiniAppExportCoder.encode(MiniAppBundle(from: app))
-        return MiniAppExportFile(data: data, filename: "\(sanitize(app.name)).miniapp.json")
+        let framework = MiniAppFramework(rawValue: app.framework) ?? .vanilla
+        let data = try MiniAppExportCoder.encodeBundle(app)
+        let fileExtension = framework == .react ? "jsx" : "html"
+        return MiniAppExportFile(data: data, filename: "\(sanitize(app.name)).\(fileExtension)")
     }
 
     /// A data-only export (storage blob) for `app`.
     static func dataExport(for app: MiniApp) throws -> MiniAppExportFile {
-        let data = try MiniAppExportCoder.encode(MiniAppDataExport(storageJSON: app.storageJSON))
-        return MiniAppExportFile(data: data, filename: "\(sanitize(app.name)).miniappdata.json")
+        let data = try MiniAppExportCoder.encodeDataExport(app)
+        return MiniAppExportFile(data: data, filename: "\(sanitize(app.name)).data.js")
     }
 }
