@@ -27,10 +27,9 @@ struct MiniAppRunnerView: View {
 
     var body: some View {
         MiniAppWebView(
+            app: app,
             source: app.source,
-            initialData: app.storageJSON,
             injectReact: app.framework == MiniAppFramework.react.rawValue,
-            onPersist: { json in app.storageJSON = json },
             onLog: { entry in append(entry) },
             useDevelopmentRuntime: startWithConsole
         )

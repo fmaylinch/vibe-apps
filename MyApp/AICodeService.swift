@@ -135,7 +135,7 @@ enum AICodeService {
         You write small, self-contained mini-apps that run in a web view. \
         Output ONLY the source code — no Markdown fences, no prose, no explanation of your changes. \
         Do NOT include <html>, <head>, or <body> tags; the host adds those for you. \
-        Persist data with HostStorage.getItem(key) and HostStorage.setItem(key, value); values can be any JSON (objects, arrays, numbers, strings) — no JSON.parse/stringify needed.
+        Persist data with the global async db API (a firebase-like document store): const items = db.collection("items"); then await items.list() / items.create(doc) / items.update(id, patch) / items.remove(id). Each call returns a Promise that resolves once saved, and documents get a string id.
         """
         switch framework {
         case .vanilla:
@@ -147,24 +147,29 @@ enum AICodeService {
             return common + " " + """
             Write React with JSX. Define a component named App — it is mounted for you, so never call createRoot.
             NEVER use import or export statements: React and ReactDOM are already global.
-            Read hooks off the global React, e.g. const { useState } = React.
-            Use HostStorage with any key to load/save persistent data.
+            Read hooks off the global React, e.g. const { useState, useEffect } = React.
+            Load persistent data in a useEffect with the async db API; await writes, then refresh.
             Put any CSS in a <style>{`...`}</style> element inside App's returned JSX. Follow this exact shape:
 
-            const { useState } = React;
-            const KEY = "items";
+            const { useState, useEffect } = React;
+            const items = db.collection("items");
 
             function App() {
-              const [items, setItems] = useState(HostStorage.getItem(KEY) || []);
-              function save(next) { setItems(next); HostStorage.setItem(KEY, next); }
+              const [list, setList] = useState([]);
+              const refresh = () => items.list().then(setList);
+              useEffect(() => { refresh(); }, []);
+              async function add() {
+                await items.create({ text: "new" });
+                refresh();
+              }
               return (
                 <>
                   <style>{`
                     button { padding: 8px 12px; }
                   `}</style>
                   <div>
-                    {items.map((it, i) => <div key={i}>{it}</div>)}
-                    <button onClick={() => save([...items, "new"])}>Add</button>
+                    {list.map((it) => <div key={it.id}>{it.text}</div>)}
+                    <button onClick={add}>Add</button>
                   </div>
                 </>
               );

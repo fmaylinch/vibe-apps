@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import WebKit
 
 #if os(macOS)
@@ -9,27 +10,25 @@ import UIKit
 typealias PlatformViewRepresentable = UIViewRepresentable
 #endif
 
-/// Renders a mini-app's HTML/CSS/JS in a WKWebView and bridges two storage APIs
-/// back to native persistence. The bridge JavaScript lives in standalone files
-/// under `WebBridge/` (loaded via `bridgeScript(_:)`) rather than inline strings,
-/// so it's easy to read and edit.
-///
-/// `HostStorage` — a synchronous, fire-and-forget key-value store:
-///   HostStorage.getItem(key)        -> any JSON value (object/array/number/string/bool) | null
-///   HostStorage.setItem(key, value) -> persists any JSON value across launches
-///   HostStorage.removeItem(key)
-///   HostStorage.clear()
+/// Renders a mini-app's HTML/CSS/JS in a WKWebView and bridges its `db` storage
+/// API back to native persistence. The bridge JavaScript lives in standalone
+/// files under `WebBridge/` (loaded via `bridgeScript(_:)`) rather than inline
+/// strings, so it's easy to read and edit.
 ///
 /// `db` — a firebase-like document/collection API whose methods return Promises
 /// that resolve only after native has performed and persisted the operation:
 ///   db.collection(name)        -> a named collection (db itself is the "default" one)
-///   await coll.list()           -> [{ id, ... }, ...]
+///   await coll.list(options?)   -> [{ id, ... }, ...]  (filtered/sorted/paged)
+///   await coll.count(options?)  -> number of matching documents
 ///   await coll.get(id)          -> { id, ... } | null
 ///   await coll.create(doc)      -> created doc (with a generated id)
 ///   await coll.update(id, patch)-> updated doc (rejects if id is missing)
 ///   await coll.remove(id)       -> null (idempotent)
-/// Collections persist inside the same `storageJSON` blob under a reserved
-/// `"__collections"` key.
+/// `list`/`count` accept `{ where, orderBy, desc, limit, offset }`: `where`
+/// filters on top-level fields (equality, or operators `>` `<` `>=` `<=` `==`
+/// `!=` `contains`, AND-combined); `orderBy`/`desc` sort by a field; `limit`/
+/// `offset` paginate. Each document is a `MiniAppDoc` row scoped by the app's
+/// `appID`, so a single write touches one row (not the whole storage blob).
 ///
 /// When `injectReact` is true, React + ReactDOM + Babel (bundled under
 /// WebRuntime/) are injected before the page loads, so the source can use
@@ -45,10 +44,11 @@ typealias PlatformViewRepresentable = UIViewRepresentable
 /// `console.*` output and uncaught errors are forwarded to `onLog` (when set)
 /// so a host can surface them in a debug console.
 struct MiniAppWebView: PlatformViewRepresentable {
+    /// The mini-app being rendered. Backs the `db` bridge: documents are
+    /// `MiniAppDoc` rows fetched/written through `app.modelContext`.
+    let app: MiniApp
     let source: String
-    let initialData: String
     let injectReact: Bool
-    let onPersist: (String) -> Void
     /// When true, the web view lays out at its full content height and reports
     /// that height through `onHeightChange` instead of scrolling internally.
     var sizeToContent: Bool = false
@@ -80,8 +80,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
     private static let baseURL = URL(string: "https://miniapp.local/")
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(initialData: initialData,
-                    onPersist: onPersist,
+        Coordinator(app: app,
                     onHeightChange: onHeightChange,
                     onLog: onLog)
     }
@@ -108,7 +107,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
         }
 
         // React libraries first (UMD globals + Babel transpiler), then the
-        // storage bridges — all at document start, before the page's scripts.
+        // `db` bridge — all at document start, before the page's scripts.
         if injectReact {
             for source in Self.reactRuntimeScripts(development: useDevelopmentRuntime) {
                 controller.addUserScript(WKUserScript(source: source,
@@ -116,10 +115,9 @@ struct MiniAppWebView: PlatformViewRepresentable {
                                                        forMainFrameOnly: true))
             }
         }
-        controller.addUserScript(WKUserScript(source: bootstrapScript,
+        controller.addUserScript(WKUserScript(source: Self.bridgeScript("db"),
                                                injectionTime: .atDocumentStart,
                                                forMainFrameOnly: true))
-        controller.add(context.coordinator, name: "storage")
         controller.add(context.coordinator, name: "db")
 
         // Content-height reporting for inline (size-to-content) rendering.
@@ -162,19 +160,6 @@ struct MiniAppWebView: PlatformViewRepresentable {
         webView.loadHTMLString(document, baseURL: Self.baseURL)
     }
 
-    /// JS injected before the page loads: seeds saved data, then exposes the
-    /// `HostStorage` and `db` bridges. The seed is a tiny generated line so the
-    /// bridge files themselves (`WebBridge/*.js`) stay static; `host-storage.js`
-    /// reads `window.__INITIAL_DATA__` set here.
-    private var bootstrapScript: String {
-        let seed = initialData.isEmpty ? "{}" : initialData
-        return """
-        window.__INITIAL_DATA__ = \(seed);
-        \(Self.bridgeScript("host-storage"))
-        \(Self.bridgeScript("db"))
-        """
-    }
-
     /// Loads a bundled bridge script (`WebBridge/<name>.js`) as a source string.
     /// The scripts ship with the app, so a miss is a packaging bug.
     static func bridgeScript(_ name: String) -> String {
@@ -205,12 +190,9 @@ struct MiniAppWebView: PlatformViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler {
-        /// Reserved `store` key under which `db` collections live, kept separate
-        /// from the mini-app's own `HostStorage` keys.
-        private static let collectionsKey = "__collections"
-
-        private var store: [String: Any]
-        private let onPersist: (String) -> Void
+        /// The mini-app whose `db` documents this coordinator reads and writes,
+        /// via `app.modelContext`. Held strongly (the view hierarchy owns it too).
+        private let app: MiniApp
         private let onHeightChange: ((CGFloat) -> Void)?
         private let onLog: ((MiniAppLogEntry) -> Void)?
         var lastHTML: String = ""
@@ -220,19 +202,12 @@ struct MiniAppWebView: PlatformViewRepresentable {
         /// this coordinator as a message handler).
         weak var webView: WKWebView?
 
-        init(initialData: String,
-             onPersist: @escaping (String) -> Void,
+        init(app: MiniApp,
              onHeightChange: ((CGFloat) -> Void)?,
              onLog: ((MiniAppLogEntry) -> Void)?) {
-            self.onPersist = onPersist
+            self.app = app
             self.onHeightChange = onHeightChange
             self.onLog = onLog
-            if let data = initialData.data(using: .utf8),
-               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                self.store = parsed
-            } else {
-                self.store = [:]
-            }
         }
 
         func userContentController(_ controller: WKUserContentController,
@@ -256,37 +231,15 @@ struct MiniAppWebView: PlatformViewRepresentable {
                 handleDB(message.body)
                 return
             }
-
-            guard let body = message.body as? [String: Any],
-                  let op = body["op"] as? String else { return }
-            switch op {
-            case "set":
-                // Value may be any JSON type (object/array/number/string/bool/null);
-                // a missing value (e.g. setItem(k, undefined)) is stored as null.
-                if let key = body["key"] as? String {
-                    store[key] = body["value"] ?? NSNull()
-                }
-            case "remove":
-                if let key = body["key"] as? String { store.removeValue(forKey: key) }
-            case "clear":
-                store.removeAll()
-            default:
-                break
-            }
-            persist()
         }
 
-        private func persist() {
-            guard let data = try? JSONSerialization.data(withJSONObject: store),
-                  let json = String(data: data, encoding: .utf8) else { return }
-            onPersist(json)
-        }
+        // MARK: - db collection bridge (SwiftData-backed)
 
-        // MARK: - db collection bridge
-
-        /// Performs a `db` operation on a collection, persists the result, and
-        /// settles the JS Promise identified by `reqId`. Messages have the shape
-        /// `{ reqId, collection, op, payload }`.
+        /// Performs a `db` operation on a collection — each document is a
+        /// `MiniAppDoc` row scoped to `app.appID` — then settles the JS Promise
+        /// identified by `reqId`. Messages have the shape
+        /// `{ reqId, collection, op, payload }`. Writes save a single row, so a
+        /// change never rewrites the whole storage blob.
         private func handleDB(_ rawBody: Any) {
             guard let body = rawBody as? [String: Any],
                   let reqId = body["reqId"] as? String,
@@ -294,41 +247,46 @@ struct MiniAppWebView: PlatformViewRepresentable {
                   let op = body["op"] as? String else { return }
             let payload = body["payload"] as? [String: Any] ?? [:]
 
-            var docs = collection(name)
             switch op {
             case "list":
-                settle(reqId, ok: true, result: docs)
+                settle(reqId, ok: true, result: query(name, options: payload))
+
+            case "count":
+                settle(reqId, ok: true, result: query(name, options: payload).count)
 
             case "get":
-                let id = payload["id"] as? String
-                settle(reqId, ok: true, result: docs.first { $0["id"] as? String == id } ?? NSNull())
+                let doc = fetchDoc(name, id: payload["id"] as? String)
+                settle(reqId, ok: true, result: doc.map { Self.wire($0) } ?? NSNull())
 
             case "create":
-                var doc = payload["doc"] as? [String: Any] ?? [:]
-                doc["id"] = UUID().uuidString
-                docs.append(doc)
-                setCollection(name, docs)
-                persist()
-                settle(reqId, ok: true, result: doc)
+                var fields = payload["doc"] as? [String: Any] ?? [:]
+                fields.removeValue(forKey: "id")   // native owns the id
+                let doc = MiniAppDoc(collection: name, appID: app.appID,
+                                     body: Self.encodeBody(fields))
+                doc.app = app
+                app.modelContext?.insert(doc)
+                save()
+                settle(reqId, ok: true, result: Self.wire(doc))
 
             case "update":
                 guard let id = payload["id"] as? String,
-                      let index = docs.firstIndex(where: { $0["id"] as? String == id }) else {
+                      let doc = fetchDoc(name, id: id) else {
                     settle(reqId, ok: false, result: "No document with id \(payload["id"] ?? "nil") in \"\(name)\"")
                     return
                 }
+                var fields = doc.decodedBody()
                 let patch = payload["patch"] as? [String: Any] ?? [:]
-                docs[index].merge(patch) { _, new in new }
-                setCollection(name, docs)
-                persist()
-                settle(reqId, ok: true, result: docs[index])
+                for (key, value) in patch where key != "id" { fields[key] = value }
+                doc.body = Self.encodeBody(fields)
+                save()
+                settle(reqId, ok: true, result: Self.wire(doc))
 
             case "remove":
                 // Idempotent: removing a missing id still resolves.
-                let id = payload["id"] as? String
-                docs.removeAll { $0["id"] as? String == id }
-                setCollection(name, docs)
-                persist()
+                if let id = payload["id"] as? String, let doc = fetchDoc(name, id: id) {
+                    app.modelContext?.delete(doc)
+                    save()
+                }
                 settle(reqId, ok: true, result: NSNull())
 
             default:
@@ -336,18 +294,151 @@ struct MiniAppWebView: PlatformViewRepresentable {
             }
         }
 
-        /// Reads a collection's documents from the store (empty if absent).
-        /// JSON-decoded arrays come back as `[Any]`, so fall back to mapping.
-        private func collection(_ name: String) -> [[String: Any]] {
-            let cols = store[Self.collectionsKey] as? [String: Any] ?? [:]
-            if let docs = cols[name] as? [[String: Any]] { return docs }
-            return (cols[name] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+        /// All documents in `collection` for this app, in insertion order.
+        private func docs(in collection: String) -> [MiniAppDoc] {
+            guard let context = app.modelContext else { return [] }
+            let appID = app.appID
+            let descriptor = FetchDescriptor<MiniAppDoc>(
+                predicate: #Predicate { $0.appID == appID && $0.collection == collection },
+                sortBy: [SortDescriptor(\.createdAt)]
+            )
+            return (try? context.fetch(descriptor)) ?? []
         }
 
-        private func setCollection(_ name: String, _ docs: [[String: Any]]) {
-            var cols = store[Self.collectionsKey] as? [String: Any] ?? [:]
-            cols[name] = docs
-            store[Self.collectionsKey] = cols
+        /// The single document with `id` in `collection`, or nil.
+        private func fetchDoc(_ collection: String, id: String?) -> MiniAppDoc? {
+            guard let id, let context = app.modelContext else { return nil }
+            let appID = app.appID
+            var descriptor = FetchDescriptor<MiniAppDoc>(
+                predicate: #Predicate {
+                    $0.appID == appID && $0.collection == collection && $0.id == id
+                }
+            )
+            descriptor.fetchLimit = 1
+            return try? context.fetch(descriptor).first
+        }
+
+        /// Runs a `list`/`count` query: fetch the collection (insertion order),
+        /// then apply `where` filtering, `orderBy`/`desc` sorting, and
+        /// `offset`/`limit` paging over the decoded document dictionaries.
+        private func query(_ collection: String, options: [String: Any]) -> [[String: Any]] {
+            var rows = docs(in: collection).map { Self.wire($0) }
+
+            if let clause = options["where"] as? [String: Any], !clause.isEmpty {
+                rows = rows.filter { Self.matches($0, clause) }
+            }
+            if let field = options["orderBy"] as? String {
+                let descending = (options["desc"] as? NSNumber)?.boolValue ?? false
+                rows.sort {
+                    let order = Self.jsonCompare($0[field], $1[field])
+                    return descending ? order > 0 : order < 0
+                }
+            }
+            if let offset = (options["offset"] as? NSNumber)?.intValue, offset > 0 {
+                rows = offset < rows.count ? Array(rows[offset...]) : []
+            }
+            if let limit = (options["limit"] as? NSNumber)?.intValue, limit >= 0 {
+                rows = Array(rows.prefix(limit))
+            }
+            return rows
+        }
+
+        /// Saves the model context so the settled Promise reflects persisted state.
+        private func save() { try? app.modelContext?.save() }
+
+        // MARK: - db query helpers
+
+        /// A document's wire form: its decoded fields plus its `id`.
+        private static func wire(_ doc: MiniAppDoc) -> [String: Any] {
+            var dict = doc.decodedBody()
+            dict["id"] = doc.id
+            return dict
+        }
+
+        /// Encodes a document's fields to a JSON object string for `body`.
+        private static func encodeBody(_ fields: [String: Any]) -> String {
+            guard let data = try? JSONSerialization.data(withJSONObject: fields),
+                  let string = String(data: data, encoding: .utf8) else { return "{}" }
+            return string
+        }
+
+        /// `where` operators usable as `{ field: { ">=": 2 } }`.
+        private static let queryOperators: Set<String> =
+            [">", "<", ">=", "<=", "==", "!=", "contains"]
+
+        /// Whether `doc` satisfies every condition in `clause` (AND-combined). A
+        /// condition is an operator object when it's a dictionary whose keys are
+        /// all known operators; otherwise it's an equality match.
+        private static func matches(_ doc: [String: Any], _ clause: [String: Any]) -> Bool {
+            for (field, condition) in clause {
+                let value = doc[field]
+                if let ops = condition as? [String: Any], !ops.isEmpty,
+                   ops.keys.allSatisfy({ queryOperators.contains($0) }) {
+                    for (op, operand) in ops where !satisfies(value, op, operand) {
+                        return false
+                    }
+                } else if !jsonEqual(value, condition) {
+                    return false
+                }
+            }
+            return true
+        }
+
+        private static func satisfies(_ value: Any?, _ op: String, _ operand: Any) -> Bool {
+            switch op {
+            case "==": return jsonEqual(value, operand)
+            case "!=": return !jsonEqual(value, operand)
+            case ">":  return jsonCompare(value, operand) > 0
+            case "<":  return jsonCompare(value, operand) < 0
+            case ">=": return jsonCompare(value, operand) >= 0
+            case "<=": return jsonCompare(value, operand) <= 0
+            case "contains":
+                if let string = value as? String, let needle = operand as? String {
+                    return string.contains(needle)
+                }
+                if let array = value as? [Any] {
+                    return array.contains { jsonEqual($0, operand) }
+                }
+                return false
+            default: return false
+            }
+        }
+
+        /// Deep equality for decoded JSON values (numbers, strings, bools, null,
+        /// arrays, objects). Missing (`nil`) and JSON `null` compare equal.
+        private static func jsonEqual(_ a: Any?, _ b: Any?) -> Bool {
+            let lhs = (a is NSNull) ? nil : a
+            let rhs = (b is NSNull) ? nil : b
+            if lhs == nil && rhs == nil { return true }
+            guard let lhs, let rhs else { return false }
+            if let l = lhs as? NSNumber, let r = rhs as? NSNumber { return l == r }
+            if let l = lhs as? String, let r = rhs as? String { return l == r }
+            if let l = lhs as? [Any], let r = rhs as? [Any] {
+                return l.count == r.count && zip(l, r).allSatisfy { jsonEqual($0, $1) }
+            }
+            if let l = lhs as? [String: Any], let r = rhs as? [String: Any] {
+                return l.count == r.count && l.allSatisfy { jsonEqual($0.value, r[$0.key]) }
+            }
+            return false
+        }
+
+        /// Orders two decoded JSON values for `orderBy`. Numbers and strings sort
+        /// naturally; missing/`null` sorts first; mismatched types are treated as
+        /// equal (left where they are).
+        private static func jsonCompare(_ a: Any?, _ b: Any?) -> Int {
+            let lhs = (a is NSNull) ? nil : a
+            let rhs = (b is NSNull) ? nil : b
+            if lhs == nil && rhs == nil { return 0 }
+            guard let lhs else { return -1 }
+            guard let rhs else { return 1 }
+            if let l = lhs as? NSNumber, let r = rhs as? NSNumber {
+                let x = l.doubleValue, y = r.doubleValue
+                return x < y ? -1 : (x > y ? 1 : 0)
+            }
+            if let l = lhs as? String, let r = rhs as? String {
+                return l < r ? -1 : (l > r ? 1 : 0)
+            }
+            return 0
         }
 
         /// Settles the pending JS Promise for `reqId` by calling `window.__settleDb`.

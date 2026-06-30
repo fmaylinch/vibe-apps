@@ -22,13 +22,15 @@ import UniformTypeIdentifiers
     /// The fallback guarantees the app always launches.
     private static func makeContainer() -> ModelContainer {
         let cloudConfiguration = ModelConfiguration(cloudKitDatabase: .automatic)
-        if let container = try? ModelContainer(for: MiniApp.self, configurations: cloudConfiguration) {
+        if let container = try? ModelContainer(for: MiniApp.self, MiniAppDoc.self,
+                                               configurations: cloudConfiguration) {
             return container
         }
 
         let localConfiguration = ModelConfiguration(cloudKitDatabase: .none)
         do {
-            return try ModelContainer(for: MiniApp.self, configurations: localConfiguration)
+            return try ModelContainer(for: MiniApp.self, MiniAppDoc.self,
+                                      configurations: localConfiguration)
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
@@ -107,12 +109,6 @@ struct HomeView: View {
             } message: { message in
                 Text(message)
             }
-            // Upgrade any legacy double-encoded storage to the native-JSON
-            // format before a mini-app's web view seeds from it. Re-runs as
-            // CloudKit-synced rows arrive; each app migrates at most once.
-            .task(id: miniApps.map(\.persistentModelID)) {
-                for app in miniApps { app.migrateStorageIfNeeded() }
-            }
             .navigationDestination(for: MiniApp.self) { app in
                 MiniAppRunnerView(app: app)
             }
@@ -138,19 +134,14 @@ struct HomeView: View {
     private func newMiniAppMenu<TriggerLabel: View>(@ViewBuilder label: () -> TriggerLabel) -> some View {
         Menu {
             Button {
-                createMiniApp(from: MiniAppTemplate.todoList)
+                createMiniApp(from: MiniAppTemplate.todosVanilla)
             } label: {
                 Label("HTML / JavaScript", systemImage: "curlybraces")
             }
             Button {
-                createMiniApp(from: MiniAppTemplate.reactTodoList)
+                createMiniApp(from: MiniAppTemplate.todosReact)
             } label: {
                 Label("React (JSX)", systemImage: "atom")
-            }
-            Button {
-                createMiniApp(from: MiniAppTemplate.reactTodoDb)
-            } label: {
-                Label("React (JSX) + db", systemImage: "tray.full")
             }
         } label: {
             label()
@@ -256,7 +247,9 @@ struct HomeView: View {
             do {
                 let data = try readSecurityScoped(url)
                 let bundle = try MiniAppExportCoder.decodeBundle(data)
-                context.insert(bundle.makeMiniApp())
+                let app = bundle.makeMiniApp()
+                context.insert(app)
+                app.adoptCollections(from: bundle.resolvedStorageJSON, in: context)
             } catch {
                 importError = error.localizedDescription
             }
@@ -273,9 +266,7 @@ struct HomeView: View {
             do {
                 let data = try readSecurityScoped(url)
                 let export = try MiniAppExportCoder.decodeDataExport(data)
-                target.storageJSON = export.resolvedStorageJSON
-                target.storageFormatVersion = MiniApp.currentStorageFormatVersion
-                target.updatedAt = .now
+                replaceData(of: target, with: export.resolvedStorageJSON)
             } catch {
                 importError = error.localizedDescription
             }
@@ -287,10 +278,20 @@ struct HomeView: View {
         guard let data = pastedExportData(strings) else { return }
         do {
             let bundle = try MiniAppExportCoder.decodeBundle(data)
-            context.insert(bundle.makeMiniApp())
+            let app = bundle.makeMiniApp()
+            context.insert(app)
+            app.adoptCollections(from: bundle.resolvedStorageJSON, in: context)
         } catch {
             importError = error.localizedDescription
         }
+    }
+
+    /// Replaces a mini-app's entire `db` storage with a freshly imported blob:
+    /// drop its existing documents, then recreate them from the blob.
+    private func replaceData(of target: MiniApp, with blob: String) {
+        for doc in target.documents { context.delete(doc) }
+        target.adoptCollections(from: blob, in: context)
+        target.updatedAt = .now
     }
 
     /// Imports a data-only export pasted via a `PasteButton`,
@@ -299,9 +300,7 @@ struct HomeView: View {
         guard let data = pastedExportData(strings) else { return }
         do {
             let export = try MiniAppExportCoder.decodeDataExport(data)
-            target.storageJSON = export.resolvedStorageJSON
-            target.storageFormatVersion = MiniApp.currentStorageFormatVersion
-            target.updatedAt = .now
+            replaceData(of: target, with: export.resolvedStorageJSON)
         } catch {
             importError = error.localizedDescription
         }
@@ -384,22 +383,18 @@ private struct InlineMiniAppView: View {
 
     var body: some View {
         MiniAppWebView(
+            app: app,
             source: app.source,
-            initialData: app.storageJSON,
             injectReact: app.framework == MiniAppFramework.react.rawValue,
-            onPersist: { json in app.storageJSON = json },
             sizeToContent: true,
             onHeightChange: { newHeight in
                 if abs(newHeight - contentHeight) > 0.5 { contentHeight = newHeight }
             },
             scrollEnabled: isCapped
         )
-        // The web view seeds its storage once at creation, so an external data
-        // change (import, or an edit in the editor) wouldn't otherwise show up
-        // in a live inline mini-app until the view is rebuilt. Keying on
-        // `updatedAt` rebuilds it then — but NOT on the web view's own
-        // `setItem` persistence, which updates `storageJSON` without touching
-        // `updatedAt`, so ordinary interaction keeps its state.
+        // Rebuild the inline web view when the app's source/metadata changes
+        // (an edit or import) by keying on `updatedAt`. A mini-app's own `db`
+        // writes don't touch `updatedAt`, so ordinary interaction keeps state.
         .id(app.updatedAt)
         .frame(height: frameHeight)
         .clipShape(RoundedRectangle(cornerRadius: 12))

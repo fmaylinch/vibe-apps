@@ -45,44 +45,17 @@ nonisolated enum JSONValue: Codable, Equatable {
         }
     }
 
-    /// Parses a JSON string (such as `MiniApp.storageJSON`) into a `JSONValue`.
+    /// Parses a JSON string (such as an exported storage blob) into a `JSONValue`.
     /// Returns `nil` when the string isn't valid JSON.
     static func parse(_ string: String) -> JSONValue? {
         guard let data = string.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(JSONValue.self, from: data)
     }
 
-    /// Serializes back to a compact JSON string suitable for `storageJSON`.
+    /// Serializes back to a compact JSON string (an exported storage blob).
     func compactString() -> String? {
         guard let data = try? JSONEncoder().encode(self) else { return nil }
         return String(data: data, encoding: .utf8)
-    }
-
-    /// Whether this value is a nested container (object or array).
-    var isContainer: Bool {
-        switch self {
-        case .object, .array: return true
-        default: return false
-        }
-    }
-
-    /// Expands the storage map's string values that are themselves JSON
-    /// containers into native nested JSON — turning a legacy double-encoded
-    /// blob like `{"todos":"[...]"}` into `{"todos":[...]}`. Plain (non-JSON)
-    /// string values are left untouched. Used by `MiniApp.migrateStorageIfNeeded()`
-    /// to upgrade saved data to the native-JSON storage format.
-    func expandingStorageValues() -> JSONValue {
-        guard case .object(let dict) = self else { return self }
-        var result: [String: JSONValue] = [:]
-        for (key, value) in dict {
-            if case .string(let raw) = value,
-               let parsed = JSONValue.parse(raw), parsed.isContainer {
-                result[key] = parsed
-            } else {
-                result[key] = value
-            }
-        }
-        return .object(result)
     }
 }
 
@@ -104,13 +77,15 @@ nonisolated struct MiniAppBundle {
     var framework: String
     var source: String
     /// The storage blob as a nested JSON object when parseable; otherwise the
-    /// raw string is preserved in `storageRaw`.
+    /// raw string is preserved in `storageRaw`. Its `__collections` map seeds the
+    /// new app's `db` documents via `MiniApp.adoptCollections(from:in:)`.
     var storage: JSONValue?
     var storageRaw: String?
     var isInline: Bool
     var inlineMaxHeight: Double?
 
-    /// The compact `storageJSON` string to give a reconstructed `MiniApp`.
+    /// The compact storage blob (`const STORAGE = …`) to seed the app's `db`
+    /// documents from after it is inserted.
     var resolvedStorageJSON: String {
         if let storage, let string = storage.compactString() {
             return string
@@ -121,6 +96,8 @@ nonisolated struct MiniAppBundle {
 
     /// Builds a new (uninserted) `MiniApp` from this bundle. `createdAt` /
     /// `updatedAt` default to now, so the import sorts to the top of the list.
+    /// The caller must insert it, then seed `db` documents with
+    /// `adoptCollections(from: resolvedStorageJSON, in:)`.
     func makeMiniApp() -> MiniApp {
         MiniApp(
             name: name,
@@ -128,19 +105,18 @@ nonisolated struct MiniAppBundle {
             source: source,
             framework: MiniAppFramework(rawValue: framework)?.rawValue
                 ?? MiniAppFramework.vanilla.rawValue,
-            storageJSON: resolvedStorageJSON,
             isInline: isInline,
             inlineMaxHeight: inlineMaxHeight
         )
     }
 }
 
-/// The data-only export: just a mini-app's runtime storage blob.
+/// The data-only export: just a mini-app's `db` storage blob.
 nonisolated struct MiniAppDataExport {
     var storage: JSONValue?
     var storageRaw: String?
 
-    /// The compact `storageJSON` string to assign back to a mini-app.
+    /// The compact storage blob to reseed an app's `db` documents from.
     var resolvedStorageJSON: String {
         if let storage, let string = storage.compactString() {
             return string
@@ -190,7 +166,7 @@ enum MiniAppExportCoder {
     /// Encodes a complete app as an editable HTML or JSX source file.
     static func encodeBundle(_ app: MiniApp) throws -> Data {
         let framework = MiniAppFramework(rawValue: app.framework) ?? .vanilla
-        let storage = serializedStorage(app.storageJSON)
+        let storage = serializedStorage(app.storageJSONForExport())
         let metadata = metadataLines(
             for: app, framework: framework, storageIsRaw: storage.isRaw
         )
@@ -233,7 +209,7 @@ enum MiniAppExportCoder {
 
     /// Encodes storage by itself as a small JavaScript file.
     static func encodeDataExport(_ app: MiniApp) throws -> Data {
-        let storage = serializedStorage(app.storageJSON)
+        let storage = serializedStorage(app.storageJSONForExport())
         let rawMetadata = storage.isRaw ? "\n// @storage-encoding raw" : ""
         let text = """
         // @name \(singleLine(app.name))
@@ -352,16 +328,16 @@ enum MiniAppExportCoder {
     }
 
     private static func serializedStorage(
-        _ storageJSON: String
+        _ blob: String
     ) -> (text: String, isRaw: Bool) {
-        guard let data = storageJSON.data(using: .utf8),
+        guard let data = blob.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
               let pretty = try? JSONSerialization.data(
                 withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed]
               ),
               let string = String(data: pretty, encoding: .utf8) else {
-            // Invalid legacy blobs are preserved as a JSON string.
-            let encoded = try? JSONEncoder().encode(storageJSON)
+            // An unparseable blob is preserved verbatim as a JSON string.
+            let encoded = try? JSONEncoder().encode(blob)
             let string = encoded.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
             return (string, true)
         }
@@ -591,10 +567,10 @@ enum MiniAppExportCoder {
 // MARK: - Transferable file for ShareLink
 
 /// A `Transferable` wrapper so a mini-app export can be shared with a sensible
-/// code-file name (e.g. "TodoList.jsx").
+/// code-file name (e.g. "todos-react.jsx").
 struct MiniAppExportFile: Transferable {
     let data: Data
-    /// The full filename, e.g. "TodoList.jsx".
+    /// The full filename, e.g. "todos-react.jsx".
     let filename: String
 
     static var transferRepresentation: some TransferRepresentation {

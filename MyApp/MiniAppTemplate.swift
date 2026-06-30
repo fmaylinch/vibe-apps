@@ -8,19 +8,15 @@ import Foundation
 /// metadata and storage format accepted by Import App, and is decoded through
 /// that path so starter metadata cannot drift from its source file.
 enum MiniAppTemplate {
-    /// Plain HTML/CSS/JS To-do List. Just body markup, a `<style>` block, and a
-    /// `<script>` — the document shell is added by the host.
-    static var todoList: MiniAppBundle { load("todo-list", "html") }
+    /// Plain HTML/CSS/JS To-do List backed by the async `db` API. Just body
+    /// markup, a `<style>` block, and a `<script>` — the document shell is added
+    /// by the host.
+    static var todosVanilla: MiniAppBundle { load("todos-vanilla", "html") }
 
-    /// React + JSX To-do List. Just an `App` component with inline style block.
-    // The host wraps the source in a Babel script and auto-mounts
-    /// `<App/>` (no `createRoot` boilerplate needed).
-    static var reactTodoList: MiniAppBundle { load("react-todo-list", "jsx") }
-
-    /// React + JSX To-do List backed by the async `db` collection API instead of
-    /// `HostStorage`. Shows the firebase-like flow: `await`ed list/create/update/
-    /// remove calls that resolve once native has persisted each change.
-    static var reactTodoDb: MiniAppBundle { load("react-todo-db", "jsx") }
+    /// React + JSX To-do List backed by the `db` collection API. Shows the
+    /// firebase-like flow — `await`ed list/create/update/remove plus filtering,
+    /// sorting, pagination, and `count()` — in an auto-mounted `App` component.
+    static var todosReact: MiniAppBundle { load("todos-react", "jsx") }
 
     /// Loads and imports a bundled example. A missing or malformed example is a
     /// packaging bug rather than a recoverable runtime condition.

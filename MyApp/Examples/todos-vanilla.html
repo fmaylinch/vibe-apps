@@ -2,6 +2,8 @@
 @name To-dos (JS)
 @type vanilla
 @icon ✅
+
+Globals: db
 -->
 
 <h1>My Todos</h1>
@@ -23,27 +25,33 @@
 </style>
 
 <script>
-  var KEY = "todos";
-  var todos = HostStorage.getItem(KEY) || [];
+  // A firebase-like collection. Every call returns a Promise that resolves
+  // once native has persisted the change, so we await writes and re-render.
+  var todos = db.collection("todos");
 
-  function save() { HostStorage.setItem(KEY, todos); }
-
-  function render() {
+  async function render() {
+    var items = await todos.list();
     var list = document.getElementById("list");
     list.innerHTML = "";
-    todos.forEach(function (t, i) {
+    items.forEach(function (t) {
       var li = document.createElement("li");
       if (t.done) li.className = "done";
       var box = document.createElement("input");
       box.type = "checkbox";
       box.checked = t.done;
-      box.onchange = function () { todos[i].done = box.checked; save(); render(); };
+      box.onchange = async function () {
+        await todos.update(t.id, { done: box.checked });
+        render();
+      };
       var label = document.createElement("span");
       label.textContent = t.text;
       var del = document.createElement("button");
       del.className = "del";
       del.textContent = "Delete";
-      del.onclick = function () { todos.splice(i, 1); save(); render(); };
+      del.onclick = async function () {
+        await todos.remove(t.id);
+        render();
+      };
       li.appendChild(box);
       li.appendChild(label);
       li.appendChild(del);
@@ -51,13 +59,12 @@
     });
   }
 
-  function addTodo() {
+  async function addTodo() {
     var field = document.getElementById("field");
     var text = field.value.trim();
     if (!text) return;
-    todos.push({ text: text, done: false });
+    await todos.create({ text: text, done: false });
     field.value = "";
-    save();
     render();
   }
 
