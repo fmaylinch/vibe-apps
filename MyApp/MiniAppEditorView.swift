@@ -187,7 +187,7 @@ struct MiniAppEditorView: View {
         case .vanilla:
             return storage + " No need for <html> or <head> — just write body markup, <style>, and <script>. (A full HTML document still works if you write one.)"
         case .react:
-            return storage + " Just write an App component (and optional <style> blocks) — React is loaded and <App/> is mounted for you. No <html>, #root, or createRoot needed."
+            return storage + " Just write an App component, with any <style> element inside its returned JSX — React is loaded and <App/> is mounted for you. No <html>, #root, or createRoot needed."
         }
     }
 }

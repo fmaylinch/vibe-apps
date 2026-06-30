@@ -9,9 +9,9 @@ import Foundation
 /// interesting part and the host wraps it:
 ///
 ///   * **Vanilla** — write body markup, `<style>`, and `<script>` directly.
-///   * **React** — write a component named `App` (plus optional `<style>`
-///     blocks). The host hoists the styles into `<head>` and auto-mounts
-///     `<App/>` unless the source calls `createRoot` itself.
+///   * **React** — write a component named `App`, with any `<style>` element
+///     inside its returned JSX. The host auto-mounts `<App/>` unless the source
+///     calls `createRoot` itself.
 ///
 /// A source that is already a complete HTML document (it contains `<!doctype`
 /// or `<html`) is passed through untouched, so full control is still possible.
@@ -61,9 +61,8 @@ enum MiniAppDocument {
         """
     }
 
-    /// Wraps a React fragment: hoists any `<style>` blocks into `<head>`, drops
-    /// the remaining JSX into a script, and auto-mounts `<App/>` unless the author
-    /// already calls `createRoot`.
+    /// Wraps a React fragment in a script and auto-mounts `<App/>` unless the
+    /// author already calls `createRoot`.
     ///
     /// Rather than letting Babel auto-run a `type="text/babel"` script (whose
     /// failures surface only as an opaque "Script error."), the JSX is held in an
@@ -71,8 +70,7 @@ enum MiniAppDocument {
     /// Babel syntax errors and initial render errors are reported to the console
     /// with their full message and stack.
     private static func wrapReact(_ fragment: String) -> String {
-        let (styles, code) = extractStyles(fragment)
-        let mount = code.contains("createRoot")
+        let mount = fragment.contains("createRoot")
             ? ""
             : "\n\nReactDOM.createRoot(document.getElementById(\"root\")).render(<App />);"
         return """
@@ -80,12 +78,11 @@ enum MiniAppDocument {
         <html>
         <head>
         \(head)
-        \(styles)
         </head>
         <body>
         <div id="root"></div>
         <script type="text/plain" id="__miniapp_source__">
-        \(code)\(mount)
+        \(fragment)\(mount)
         </script>
         <script>
         (function () {
@@ -101,25 +98,5 @@ enum MiniAppDocument {
         </body>
         </html>
         """
-    }
-
-    /// Splits `<style>...</style>` blocks out of a fragment so they can live in
-    /// `<head>` rather than inside a script. Returns the joined style tags and
-    /// the fragment with those tags removed.
-    private static func extractStyles(_ source: String) -> (styles: String, code: String) {
-        guard let regex = try? NSRegularExpression(
-            pattern: "<style[^>]*>.*?</style>",
-            options: [.dotMatchesLineSeparators, .caseInsensitive]
-        ) else {
-            return ("", source)
-        }
-        let range = NSRange(source.startIndex..., in: source)
-        let matches = regex.matches(in: source, range: range)
-        guard !matches.isEmpty else { return ("", source) }
-
-        let styles = matches.compactMap { Range($0.range, in: source).map { String(source[$0]) } }
-        let code = regex.stringByReplacingMatches(in: source, range: range, withTemplate: "")
-        return (styles.joined(separator: "\n"),
-                code.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

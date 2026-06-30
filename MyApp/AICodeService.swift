@@ -149,7 +149,7 @@ enum AICodeService {
             NEVER use import or export statements: React and ReactDOM are already global.
             Read hooks off the global React, e.g. const { useState } = React.
             Use HostStorage with any key to load/save persistent data.
-            Put any CSS in a <style> block. Follow this exact shape:
+            Put any CSS in a <style>{`...`}</style> element inside App's returned JSX. Follow this exact shape:
 
             const { useState } = React;
             const KEY = "items";
@@ -158,14 +158,17 @@ enum AICodeService {
               const [items, setItems] = useState(HostStorage.getItem(KEY) || []);
               function save(next) { setItems(next); HostStorage.setItem(KEY, next); }
               return (
-                <div>
-                  {items.map((it, i) => <div key={i}>{it}</div>)}
-                  <button onClick={() => save([...items, "new"])}>Add</button>
-                </div>
+                <>
+                  <style>{`
+                    button { padding: 8px 12px; }
+                  `}</style>
+                  <div>
+                    {items.map((it, i) => <div key={i}>{it}</div>)}
+                    <button onClick={() => save([...items, "new"])}>Add</button>
+                  </div>
+                </>
               );
             }
-
-            <style> button { padding: 8px 12px; } </style>
             """
         }
     }

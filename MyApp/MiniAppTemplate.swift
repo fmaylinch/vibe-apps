@@ -12,16 +12,16 @@ import Foundation
 /// base CSS — so authors only write the interesting part. State persists via
 /// the host's `HostStorage` bridge so it survives relaunch.
 enum MiniAppTemplate {
-    /// Plain HTML/CSS/JS Todo List. Just body markup, a `<style>` block, and a
+    /// Plain HTML/CSS/JS To-do List. Just body markup, a `<style>` block, and a
     /// `<script>` — the document shell is added by the host.
     static var todoList: String { load("todo-list", "html") }
 
-    /// React + JSX Todo List. Just an `App` component and a `<style>` block — the
-    /// host hoists the styles into `<head>`, wraps the JSX in a Babel script,
-    /// and auto-mounts `<App/>` (no `createRoot` boilerplate needed).
+    /// React + JSX To-do List. Just an `App` component with inline style block.
+    // The host wraps the source in a Babel script and auto-mounts
+    /// `<App/>` (no `createRoot` boilerplate needed).
     static var reactTodoList: String { load("react-todo-list", "jsx") }
 
-    /// React + JSX Todo List backed by the async `db` collection API instead of
+    /// React + JSX To-do List backed by the async `db` collection API instead of
     /// `HostStorage`. Shows the firebase-like flow: `await`ed list/create/update/
     /// remove calls that resolve once native has persisted each change.
     static var reactTodoDb: String { load("react-todo-db", "jsx") }
