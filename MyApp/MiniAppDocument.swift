@@ -10,11 +10,12 @@ import Foundation
 ///
 ///   * **Vanilla** — write body markup, `<style>`, and `<script>` directly.
 ///   * **React** — write a component named `App`, with any `<style>` element
-///     inside its returned JSX. The host auto-mounts `<App/>` unless the source
-///     calls `createRoot` itself.
+///     inside its returned JSX. The host always auto-mounts `<App/>`.
 ///
-/// A source that is already a complete HTML document (it contains `<!doctype`
-/// or `<html`) is passed through untouched, so full control is still possible.
+/// Vanilla source that is already a complete HTML document (it contains
+/// `<!doctype` or `<html`) is passed through untouched. React source always
+/// uses the host scaffold because React mini-apps define an `App` component,
+/// not their own document or root.
 enum MiniAppDocument {
     /// Base CSS shared by every wrapped fragment. Authors can override any of
     /// it with their own `<style>` block.
@@ -61,8 +62,7 @@ enum MiniAppDocument {
         """
     }
 
-    /// Wraps a React fragment in a script and auto-mounts `<App/>` unless the
-    /// author already calls `createRoot`.
+    /// Wraps a React fragment in a script and always auto-mounts `<App/>`.
     ///
     /// Rather than letting Babel auto-run a `type="text/babel"` script (whose
     /// failures surface only as an opaque "Script error."), the JSX is held in an
@@ -70,9 +70,6 @@ enum MiniAppDocument {
     /// Babel syntax errors and initial render errors are reported to the console
     /// with their full message and stack.
     private static func wrapReact(_ fragment: String) -> String {
-        let mount = fragment.contains("createRoot")
-            ? ""
-            : "\n\nReactDOM.createRoot(document.getElementById(\"root\")).render(<App />);"
         return """
         <!doctype html>
         <html>
@@ -82,7 +79,9 @@ enum MiniAppDocument {
         <body>
         <div id="root"></div>
         <script type="text/plain" id="__miniapp_source__">
-        \(fragment)\(mount)
+        \(fragment)
+
+        ReactDOM.createRoot(document.getElementById("root")).render(<App />);
         </script>
         <script>
         (function () {
