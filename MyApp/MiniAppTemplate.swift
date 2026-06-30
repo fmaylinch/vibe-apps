@@ -21,6 +21,11 @@ enum MiniAppTemplate {
     /// and auto-mounts `<App/>` (no `createRoot` boilerplate needed).
     static var reactTodoList: String { load("react-todo-list", "jsx") }
 
+    /// React + JSX Todo List backed by the async `db` collection API instead of
+    /// `HostStorage`. Shows the firebase-like flow: `await`ed list/create/update/
+    /// remove calls that resolve once native has persisted each change.
+    static var reactTodoDb: String { load("react-todo-db", "jsx") }
+
     /// Loads a bundled example file's contents. The examples ship with the app,
     /// so a miss is a packaging bug rather than a runtime condition.
     private static func load(_ name: String, _ ext: String) -> String {

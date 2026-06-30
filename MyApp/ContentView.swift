@@ -149,6 +149,12 @@ struct HomeView: View {
             } label: {
                 Label("React (JSX)", systemImage: "atom")
             }
+            Button {
+                createMiniApp(name: "React Todo (db)", icon: "🗄️",
+                              framework: .react, source: MiniAppTemplate.reactTodoDb)
+            } label: {
+                Label("React (JSX) + db", systemImage: "tray.full")
+            }
         } label: {
             label()
         }

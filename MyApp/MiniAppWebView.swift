@@ -9,14 +9,27 @@ import UIKit
 typealias PlatformViewRepresentable = UIViewRepresentable
 #endif
 
-/// Renders a mini-app's HTML/CSS/JS in a WKWebView and bridges a small
-/// `HostStorage` key-value API back to native persistence.
+/// Renders a mini-app's HTML/CSS/JS in a WKWebView and bridges two storage APIs
+/// back to native persistence. The bridge JavaScript lives in standalone files
+/// under `WebBridge/` (loaded via `bridgeScript(_:)`) rather than inline strings,
+/// so it's easy to read and edit.
 ///
-/// Mini-app JavaScript can call:
+/// `HostStorage` — a synchronous, fire-and-forget key-value store:
 ///   HostStorage.getItem(key)        -> any JSON value (object/array/number/string/bool) | null
 ///   HostStorage.setItem(key, value) -> persists any JSON value across launches
 ///   HostStorage.removeItem(key)
 ///   HostStorage.clear()
+///
+/// `db` — a firebase-like document/collection API whose methods return Promises
+/// that resolve only after native has performed and persisted the operation:
+///   db.collection(name)        -> a named collection (db itself is the "default" one)
+///   await coll.list()           -> [{ id, ... }, ...]
+///   await coll.get(id)          -> { id, ... } | null
+///   await coll.create(doc)      -> created doc (with a generated id)
+///   await coll.update(id, patch)-> updated doc (rejects if id is missing)
+///   await coll.remove(id)       -> null (idempotent)
+/// Collections persist inside the same `storageJSON` blob under a reserved
+/// `"__collections"` key.
 ///
 /// When `injectReact` is true, React + ReactDOM + Babel (bundled under
 /// WebRuntime/) are injected before the page loads, so the source can use
@@ -88,14 +101,14 @@ struct MiniAppWebView: PlatformViewRepresentable {
         // it can catch React/Babel failures too. Only wire it up when a host
         // actually wants the logs.
         if onLog != nil {
-            controller.addUserScript(WKUserScript(source: consoleCaptureScript,
+            controller.addUserScript(WKUserScript(source: Self.bridgeScript("console-capture"),
                                                    injectionTime: .atDocumentStart,
                                                    forMainFrameOnly: true))
             controller.add(context.coordinator, name: "log")
         }
 
         // React libraries first (UMD globals + Babel transpiler), then the
-        // HostStorage bridge — all at document start, before the page's scripts.
+        // storage bridges — all at document start, before the page's scripts.
         if injectReact {
             for source in Self.reactRuntimeScripts(development: useDevelopmentRuntime) {
                 controller.addUserScript(WKUserScript(source: source,
@@ -107,10 +120,11 @@ struct MiniAppWebView: PlatformViewRepresentable {
                                                injectionTime: .atDocumentStart,
                                                forMainFrameOnly: true))
         controller.add(context.coordinator, name: "storage")
+        controller.add(context.coordinator, name: "db")
 
         // Content-height reporting for inline (size-to-content) rendering.
         if sizeToContent {
-            controller.addUserScript(WKUserScript(source: heightObserverScript,
+            controller.addUserScript(WKUserScript(source: Self.bridgeScript("height-observer"),
                                                    injectionTime: .atDocumentEnd,
                                                    forMainFrameOnly: true))
             controller.add(context.coordinator, name: "hostHeight")
@@ -120,6 +134,9 @@ struct MiniAppWebView: PlatformViewRepresentable {
         config.userContentController = controller
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        // The coordinator needs the web view to settle `db` Promises (it calls
+        // back into the page via evaluateJavaScript). Held weakly there.
+        context.coordinator.webView = webView
         if sizeToContent {
             webView.isOpaque = false
             webView.backgroundColor = .clear
@@ -145,81 +162,28 @@ struct MiniAppWebView: PlatformViewRepresentable {
         webView.loadHTMLString(document, baseURL: Self.baseURL)
     }
 
-    /// JS injected before the page loads: seeds saved data and exposes `HostStorage`.
+    /// JS injected before the page loads: seeds saved data, then exposes the
+    /// `HostStorage` and `db` bridges. The seed is a tiny generated line so the
+    /// bridge files themselves (`WebBridge/*.js`) stay static; `host-storage.js`
+    /// reads `window.__INITIAL_DATA__` set here.
     private var bootstrapScript: String {
         let seed = initialData.isEmpty ? "{}" : initialData
         return """
         window.__INITIAL_DATA__ = \(seed);
-        window.HostStorage = (function () {
-            var data = window.__INITIAL_DATA__ || {};
-            function send(msg) { window.webkit.messageHandlers.storage.postMessage(msg); }
-            return {
-                getItem: function (k) {
-                    return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null;
-                },
-                setItem: function (k, v) { data[k] = v; send({ op: "set", key: k, value: v }); },
-                removeItem: function (k) { delete data[k]; send({ op: "remove", key: k }); },
-                clear: function () { data = {}; send({ op: "clear" }); }
-            };
-        })();
+        \(Self.bridgeScript("host-storage"))
+        \(Self.bridgeScript("db"))
         """
     }
 
-    /// JS injected at document start: routes `console.*`, uncaught errors, and
-    /// unhandled promise rejections to the host so they can be shown in a console.
-    private var consoleCaptureScript: String {
-        """
-        (function () {
-            function post(level, args) {
-                try {
-                    var parts = Array.prototype.map.call(args, function (a) {
-                        if (a instanceof Error) return (a.stack || (a.name + ": " + a.message));
-                        if (typeof a === "object" && a !== null) {
-                            try { return JSON.stringify(a); } catch (e) { return String(a); }
-                        }
-                        return String(a);
-                    });
-                    window.webkit.messageHandlers.log.postMessage({ level: level, message: parts.join(" ") });
-                } catch (e) { /* never let logging break the app */ }
-            }
-            ["log", "info", "debug", "warn", "error"].forEach(function (name) {
-                var original = console[name] ? console[name].bind(console) : null;
-                console[name] = function () {
-                    post(name === "warn" ? "warning" : name, arguments);
-                    if (original) original.apply(console, arguments);
-                };
-            });
-            window.addEventListener("error", function (e) {
-                // Same-origin loads expose the real Error, including its stack.
-                if (e.error && e.error.stack) { post("error", [e.error.stack]); return; }
-                var where = e.filename ? (" (" + e.filename + ":" + e.lineno + ":" + e.colno + ")") : "";
-                post("error", [(e.message || "Script error") + where]);
-            });
-            window.addEventListener("unhandledrejection", function (e) {
-                var reason = e.reason && e.reason.message ? e.reason.message : e.reason;
-                post("error", ["Unhandled promise rejection: " + reason]);
-            });
-        })();
-        """
-    }
-
-    /// JS injected after the document loads: reports the body's content height
-    /// to the host whenever it changes, so the native view can size to fit.
-    private var heightObserverScript: String {
-        """
-        (function () {
-            function report() {
-                var h = Math.ceil(document.body ? document.body.scrollHeight
-                                                : document.documentElement.scrollHeight);
-                window.webkit.messageHandlers.hostHeight.postMessage(h);
-            }
-            window.addEventListener("load", report);
-            if (document.body && window.ResizeObserver) {
-                new ResizeObserver(report).observe(document.body);
-            }
-            report();
-        })();
-        """
+    /// Loads a bundled bridge script (`WebBridge/<name>.js`) as a source string.
+    /// The scripts ship with the app, so a miss is a packaging bug.
+    static func bridgeScript(_ name: String) -> String {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "js"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else {
+            assertionFailure("Missing bundled bridge script: \(name).js")
+            return ""
+        }
+        return source
     }
 
     /// Loads the bundled React runtime files (UMD React, ReactDOM, Babel) as
@@ -241,11 +205,20 @@ struct MiniAppWebView: PlatformViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler {
+        /// Reserved `store` key under which `db` collections live, kept separate
+        /// from the mini-app's own `HostStorage` keys.
+        private static let collectionsKey = "__collections"
+
         private var store: [String: Any]
         private let onPersist: (String) -> Void
         private let onHeightChange: ((CGFloat) -> Void)?
         private let onLog: ((MiniAppLogEntry) -> Void)?
         var lastHTML: String = ""
+        /// The web view this coordinator backs, used to settle `db` Promises by
+        /// calling `window.__settleDb` via `evaluateJavaScript`. Weak to avoid a
+        /// retain cycle (the web view owns the content controller, which retains
+        /// this coordinator as a message handler).
+        weak var webView: WKWebView?
 
         init(initialData: String,
              onPersist: @escaping (String) -> Void,
@@ -279,6 +252,11 @@ struct MiniAppWebView: PlatformViewRepresentable {
                 return
             }
 
+            if message.name == "db" {
+                handleDB(message.body)
+                return
+            }
+
             guard let body = message.body as? [String: Any],
                   let op = body["op"] as? String else { return }
             switch op {
@@ -302,6 +280,93 @@ struct MiniAppWebView: PlatformViewRepresentable {
             guard let data = try? JSONSerialization.data(withJSONObject: store),
                   let json = String(data: data, encoding: .utf8) else { return }
             onPersist(json)
+        }
+
+        // MARK: - db collection bridge
+
+        /// Performs a `db` operation on a collection, persists the result, and
+        /// settles the JS Promise identified by `reqId`. Messages have the shape
+        /// `{ reqId, collection, op, payload }`.
+        private func handleDB(_ rawBody: Any) {
+            guard let body = rawBody as? [String: Any],
+                  let reqId = body["reqId"] as? String,
+                  let name = body["collection"] as? String,
+                  let op = body["op"] as? String else { return }
+            let payload = body["payload"] as? [String: Any] ?? [:]
+
+            var docs = collection(name)
+            switch op {
+            case "list":
+                settle(reqId, ok: true, result: docs)
+
+            case "get":
+                let id = payload["id"] as? String
+                settle(reqId, ok: true, result: docs.first { $0["id"] as? String == id } ?? NSNull())
+
+            case "create":
+                var doc = payload["doc"] as? [String: Any] ?? [:]
+                doc["id"] = UUID().uuidString
+                docs.append(doc)
+                setCollection(name, docs)
+                persist()
+                settle(reqId, ok: true, result: doc)
+
+            case "update":
+                guard let id = payload["id"] as? String,
+                      let index = docs.firstIndex(where: { $0["id"] as? String == id }) else {
+                    settle(reqId, ok: false, result: "No document with id \(payload["id"] ?? "nil") in \"\(name)\"")
+                    return
+                }
+                let patch = payload["patch"] as? [String: Any] ?? [:]
+                docs[index].merge(patch) { _, new in new }
+                setCollection(name, docs)
+                persist()
+                settle(reqId, ok: true, result: docs[index])
+
+            case "remove":
+                // Idempotent: removing a missing id still resolves.
+                let id = payload["id"] as? String
+                docs.removeAll { $0["id"] as? String == id }
+                setCollection(name, docs)
+                persist()
+                settle(reqId, ok: true, result: NSNull())
+
+            default:
+                settle(reqId, ok: false, result: "Unknown db op \"\(op)\"")
+            }
+        }
+
+        /// Reads a collection's documents from the store (empty if absent).
+        /// JSON-decoded arrays come back as `[Any]`, so fall back to mapping.
+        private func collection(_ name: String) -> [[String: Any]] {
+            let cols = store[Self.collectionsKey] as? [String: Any] ?? [:]
+            if let docs = cols[name] as? [[String: Any]] { return docs }
+            return (cols[name] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+        }
+
+        private func setCollection(_ name: String, _ docs: [[String: Any]]) {
+            var cols = store[Self.collectionsKey] as? [String: Any] ?? [:]
+            cols[name] = docs
+            store[Self.collectionsKey] = cols
+        }
+
+        /// Settles the pending JS Promise for `reqId` by calling `window.__settleDb`.
+        /// On success `result` is the JSON value to resolve with; on failure it is
+        /// the error message string. Runs on the main thread (message callbacks do).
+        private func settle(_ reqId: String, ok: Bool, result: Any?) {
+            let resultJSON = jsonLiteral(result ?? NSNull())
+            let js = "window.__settleDb(\(jsonLiteral(reqId)), \(ok), \(resultJSON));"
+            webView?.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        /// Encodes any JSON value (including bare strings/null) to a JS literal.
+        private func jsonLiteral(_ value: Any) -> String {
+            guard let data = try? JSONSerialization.data(withJSONObject: value,
+                                                          options: [.fragmentsAllowed]),
+                  let string = String(data: data, encoding: .utf8) else {
+                return "null"
+            }
+            return string
         }
     }
 }
