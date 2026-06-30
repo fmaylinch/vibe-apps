@@ -1,0 +1,63 @@
+<h1>My Todos</h1>
+<div class="row">
+  <input id="field" type="text" placeholder="Add a task...">
+  <button onclick="addTodo()">Add</button>
+</div>
+<ul id="list"></ul>
+
+<style>
+  .row { display: flex; gap: 8px; margin-bottom: 12px; }
+  input[type=text] { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #8884; border-radius: 10px; }
+  button { padding: 10px 14px; font-size: 1rem; border: 0; border-radius: 10px; background: #007aff; color: #fff; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { display: flex; align-items: center; gap: 10px; padding: 12px 4px; border-bottom: 1px solid #8883; }
+  li.done span { text-decoration: line-through; opacity: 0.5; }
+  li span { flex: 1; }
+  .del { background: transparent; color: #ff3b30; padding: 4px 8px; }
+</style>
+
+<script>
+  var KEY = "todos";
+  var todos = HostStorage.getItem(KEY) || [];
+
+  function save() { HostStorage.setItem(KEY, todos); }
+
+  function render() {
+    var list = document.getElementById("list");
+    list.innerHTML = "";
+    todos.forEach(function (t, i) {
+      var li = document.createElement("li");
+      if (t.done) li.className = "done";
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = t.done;
+      box.onchange = function () { todos[i].done = box.checked; save(); render(); };
+      var label = document.createElement("span");
+      label.textContent = t.text;
+      var del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "Delete";
+      del.onclick = function () { todos.splice(i, 1); save(); render(); };
+      li.appendChild(box);
+      li.appendChild(label);
+      li.appendChild(del);
+      list.appendChild(li);
+    });
+  }
+
+  function addTodo() {
+    var field = document.getElementById("field");
+    var text = field.value.trim();
+    if (!text) return;
+    todos.push({ text: text, done: false });
+    field.value = "";
+    save();
+    render();
+  }
+
+  document.getElementById("field").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") addTodo();
+  });
+
+  render();
+</script>

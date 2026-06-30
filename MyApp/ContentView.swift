@@ -144,8 +144,8 @@ struct HomeView: View {
                 Label("HTML / JavaScript", systemImage: "curlybraces")
             }
             Button {
-                createMiniApp(name: "React Counter", icon: "⚛️",
-                              framework: .react, source: MiniAppTemplate.reactCounter)
+                createMiniApp(name: "React Todo List", icon: "⚛️",
+                              framework: .react, source: MiniAppTemplate.reactTodoList)
             } label: {
                 Label("React (JSX)", systemImage: "atom")
             }
