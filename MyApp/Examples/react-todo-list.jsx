@@ -1,3 +1,7 @@
+// @name To-dos (React)
+// @type react
+// @icon ⚛️
+
 const { useState } = React;
 const KEY = "todos";
 
@@ -62,3 +66,6 @@ function App() {
     </>
   );
 }
+
+// @miniapp-storage
+const STORAGE = {};

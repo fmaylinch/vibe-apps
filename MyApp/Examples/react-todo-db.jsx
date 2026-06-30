@@ -1,3 +1,7 @@
+// @name To-dos (React + db)
+// @type react
+// @icon 🗄️
+
 const { useState, useEffect } = React;
 const todos = db.collection("todos");
 
@@ -74,3 +78,6 @@ function App() {
     </>
   );
 }
+
+// @miniapp-storage
+const STORAGE = {};

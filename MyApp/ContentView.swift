@@ -138,20 +138,17 @@ struct HomeView: View {
     private func newMiniAppMenu<TriggerLabel: View>(@ViewBuilder label: () -> TriggerLabel) -> some View {
         Menu {
             Button {
-                createMiniApp(name: "Todo List", icon: "✅",
-                              framework: .vanilla, source: MiniAppTemplate.todoList)
+                createMiniApp(from: MiniAppTemplate.todoList)
             } label: {
                 Label("HTML / JavaScript", systemImage: "curlybraces")
             }
             Button {
-                createMiniApp(name: "React Todo List", icon: "⚛️",
-                              framework: .react, source: MiniAppTemplate.reactTodoList)
+                createMiniApp(from: MiniAppTemplate.reactTodoList)
             } label: {
                 Label("React (JSX)", systemImage: "atom")
             }
             Button {
-                createMiniApp(name: "React Todo (db)", icon: "🗄️",
-                              framework: .react, source: MiniAppTemplate.reactTodoDb)
+                createMiniApp(from: MiniAppTemplate.reactTodoDb)
             } label: {
                 Label("React (JSX) + db", systemImage: "tray.full")
             }
@@ -242,9 +239,8 @@ struct HomeView: View {
     /// Builds a draft mini-app and presents the editor. The draft is *not*
     /// inserted into the model context here — that happens only when the user
     /// taps Save, so dismissing the editor discards it.
-    private func createMiniApp(name: String, icon: String,
-                               framework: MiniAppFramework, source: String) {
-        newApp = MiniApp(name: name, icon: icon, source: source, framework: framework.rawValue)
+    private func createMiniApp(from bundle: MiniAppBundle) {
+        newApp = bundle.makeMiniApp()
     }
 
     private func delete(_ app: MiniApp) {
