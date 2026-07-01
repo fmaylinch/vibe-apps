@@ -144,6 +144,3 @@ function App() {
     </>
   );
 }
-
-// @miniapp-storage
-const STORAGE = {};

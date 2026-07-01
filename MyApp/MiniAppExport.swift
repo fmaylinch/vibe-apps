@@ -288,9 +288,16 @@ enum MiniAppExportCoder {
         }
 
         let body = String(text[header.bodyStart...])
-        let extraction = try isHTML
-            ? extractHTMLStorage(from: body)
-            : extractJavaScriptStorage(from: body)
+        let extraction: (source: String, storage: JSONValue)
+        do {
+            extraction = try isHTML
+                ? extractHTMLStorage(from: body)
+                : extractJavaScriptStorage(from: body)
+        } catch MiniAppImportError.missingStorage {
+            // Storage is optional for hand-authored files and bundled examples.
+            // Preserve the entire source when no declaration needs stripping.
+            extraction = (body, .object([:]))
+        }
         let storageRaw: String?
         if metadata["storage-encoding"] == "raw",
            case .string(let raw) = extraction.storage {
