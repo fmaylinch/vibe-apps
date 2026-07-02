@@ -130,7 +130,8 @@ struct HomeView: View {
         }
     }
 
-    /// A menu offering one starter per supported framework.
+    /// A menu offering framework starters plus focused examples that demonstrate
+    /// capabilities mini-apps can access directly from their web content.
     private func newMiniAppMenu<TriggerLabel: View>(@ViewBuilder label: () -> TriggerLabel) -> some View {
         Menu {
             Button {
@@ -142,6 +143,19 @@ struct HomeView: View {
                 createMiniApp(from: MiniAppTemplate.todosReact)
             } label: {
                 Label("React (JSX)", systemImage: "atom")
+            }
+
+            Divider()
+
+            Button {
+                createMiniApp(from: MiniAppTemplate.googleMapsHtml)
+            } label: {
+                Label("Google Maps HTML", systemImage: "map")
+            }
+            Button {
+                createMiniApp(from: MiniAppTemplate.googleMapsJsx)
+            } label: {
+                Label("Google Maps JSX", systemImage: "map")
             }
         } label: {
             label()
