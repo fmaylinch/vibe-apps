@@ -179,8 +179,6 @@ enum MiniAppExportCoder {
             \(header)
 
             // Globals: React, db
-            // Define an App component; it will be automatically mounted.
-            // @miniapp-source
 
             \(app.source.trimmingCharacters(in: .newlines))
 
@@ -378,10 +376,6 @@ enum MiniAppExportCoder {
         while cursor < text.endIndex {
             let lineEnd = text[cursor...].firstIndex(of: "\n") ?? text.endIndex
             let line = text[cursor..<lineEnd].trimmingCharacters(in: .whitespaces)
-            if line == "// @miniapp-source" {
-                let bodyStart = lineEnd < text.endIndex ? text.index(after: lineEnd) : lineEnd
-                return (String(text[..<cursor]), bodyStart)
-            }
             if line.hasPrefix("//") {
                 sawComment = true
                 end = lineEnd < text.endIndex ? text.index(after: lineEnd) : lineEnd

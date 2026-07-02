@@ -2,6 +2,8 @@
 // @type react
 // @icon 🗄️
 
+// Globals: React, db
+
 const { useState, useEffect, useCallback } = React;
 const todos = db.collection("todos");
 const PAGE_SIZE = 5;
