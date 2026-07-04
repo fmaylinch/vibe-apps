@@ -82,6 +82,7 @@ function App() {
   return (
     <>
       <style>{`
+        .container { padding: 16px; }
         .row { display: flex; gap: 8px; margin-bottom: 12px; }
         input[type=text] { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #8884; border-radius: 10px; }
         button { padding: 10px 14px; font-size: 1rem; border: 0; border-radius: 10px; background: #007aff; color: #fff; }
@@ -96,7 +97,7 @@ function App() {
         .del { background: transparent; color: #ff3b30; padding: 4px 8px; }
         .more { width: 100%; margin-top: 12px; background: #8882; color: inherit; }
       `}</style>
-      <div>
+      <div className="container">
         <h1>My Todos</h1>
         <form className="row" onSubmit={add}>
           <input

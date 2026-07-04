@@ -6,14 +6,17 @@
 Globals: db
 -->
 
-<h1>My Todos</h1>
-<div class="row">
-  <input id="field" type="text" placeholder="Add a task...">
-  <button onclick="addTodo()">Add</button>
+<div class="container">
+  <h1>My Todos</h1>
+  <div class="row">
+    <input id="field" type="text" placeholder="Add a task...">
+    <button onclick="addTodo()">Add</button>
+  </div>
+  <ul id="list"></ul>
 </div>
-<ul id="list"></ul>
 
 <style>
+  .container { padding: 16px }
   .row { display: flex; gap: 8px; margin-bottom: 12px; }
   input[type=text] { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #8884; border-radius: 10px; }
   button { padding: 10px 14px; font-size: 1rem; border: 0; border-radius: 10px; background: #007aff; color: #fff; }
