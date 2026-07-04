@@ -34,6 +34,11 @@ final class MiniApp {
     /// list. `nil` means no cap — the row grows to fit the content. When the
     /// content exceeds the cap, the inline view scrolls within this height.
     var inlineMaxHeight: Double?
+    /// Optional sort position in the list. Lower numbers show first; apps
+    /// without a position sort as if they were `100`, so a value below that
+    /// pins an app toward the top and a value above pushes it toward the
+    /// bottom. Apps sharing a position keep their recency order.
+    var position: Int?
     var createdAt: Date = Date.now
     var updatedAt: Date = Date.now
 
@@ -44,6 +49,7 @@ final class MiniApp {
          isInline: Bool = false,
          showsInlineHeader: Bool = true,
          inlineMaxHeight: Double? = nil,
+         position: Int? = nil,
          createdAt: Date = .now,
          updatedAt: Date = .now) {
         self.name = name
@@ -53,6 +59,7 @@ final class MiniApp {
         self.isInline = isInline
         self.showsInlineHeader = showsInlineHeader
         self.inlineMaxHeight = inlineMaxHeight
+        self.position = position
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

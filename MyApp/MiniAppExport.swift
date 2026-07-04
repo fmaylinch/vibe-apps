@@ -84,6 +84,7 @@ nonisolated struct MiniAppBundle {
     var isInline: Bool
     var showsInlineHeader: Bool
     var inlineMaxHeight: Double?
+    var position: Int?
 
     /// The compact storage blob (`const STORAGE = …`) to seed the app's `db`
     /// documents from after it is inserted.
@@ -108,7 +109,8 @@ nonisolated struct MiniAppBundle {
                 ?? MiniAppFramework.vanilla.rawValue,
             isInline: isInline,
             showsInlineHeader: showsInlineHeader,
-            inlineMaxHeight: inlineMaxHeight
+            inlineMaxHeight: inlineMaxHeight,
+            position: position
         )
     }
 }
@@ -245,7 +247,8 @@ enum MiniAppExportCoder {
             storageRaw: parsed.storageRaw,
             isInline: parsed.metadata["inline"].flatMap(Bool.init) ?? false,
             showsInlineHeader: parsed.metadata["inline-header"].flatMap(Bool.init) ?? true,
-            inlineMaxHeight: parsed.metadata["inline-max-height"].flatMap(Double.init)
+            inlineMaxHeight: parsed.metadata["inline-max-height"].flatMap(Double.init),
+            position: parsed.metadata["position"].flatMap(Int.init)
         )
     }
 
@@ -328,6 +331,9 @@ enum MiniAppExportCoder {
         if app.isInline && !app.showsInlineHeader { lines.append("@inline-header false") }
         if let height = app.inlineMaxHeight {
             lines.append("@inline-max-height \(height.formatted(.number.grouping(.never)))")
+        }
+        if let position = app.position {
+            lines.append("@position \(position)")
         }
         if storageIsRaw { lines.append("@storage-encoding raw") }
         return lines

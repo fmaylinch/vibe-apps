@@ -44,6 +44,17 @@ struct HomeView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \MiniApp.updatedAt, order: .reverse) private var miniApps: [MiniApp]
 
+    /// The apps in display order: sorted by `position` (a missing position
+    /// counts as `100`), lowest first. A stable sort keeps the query's recency
+    /// order among apps that share a position.
+    private var orderedApps: [MiniApp] {
+        miniApps.enumerated().sorted { lhs, rhs in
+            let l = lhs.element.position ?? 100
+            let r = rhs.element.position ?? 100
+            return l != r ? l < r : lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
     /// An existing mini-app being edited.
     @State private var editingApp: MiniApp?
     /// A brand-new draft awaiting its first save. It isn't inserted into the
@@ -164,7 +175,7 @@ struct HomeView: View {
 
     private var list: some View {
         List {
-            ForEach(miniApps) { app in
+            ForEach(orderedApps) { app in
                 row(for: app)
                     .contextMenu {
                         Button { editingApp = app } label: {

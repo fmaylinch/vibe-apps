@@ -48,6 +48,15 @@ struct MiniAppEditorView: View {
         )
     }
 
+    /// Binds the optional sort position to an editable text field. An empty
+    /// value clears the position (`nil` — treated as 100 when ordering).
+    private var positionText: Binding<String> {
+        Binding(
+            get: { app.position.map(String.init) ?? "" },
+            set: { app.position = Int($0) }
+        )
+    }
+
     /// Whether the Generate button can run — non-empty request and not already busy.
     private var canGenerate: Bool {
         !isGenerating && !aiPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -63,6 +72,10 @@ struct MiniAppEditorView: View {
                         Text(framework.displayName).tag(framework)
                     }
                 }
+                TextField("Position (optional)", text: positionText)
+                    #if os(iOS)
+                    .keyboardType(.numberPad)
+                    #endif
                 Toggle("Show inline in list", isOn: $app.isInline)
                 if app.isInline {
                     Toggle("Show app header", isOn: $app.showsInlineHeader)
