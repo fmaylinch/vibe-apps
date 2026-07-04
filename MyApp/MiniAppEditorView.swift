@@ -1,5 +1,10 @@
 import SwiftUI
 import SwiftData
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// Edit a mini-app's metadata, runtime, and its HTML/CSS/JavaScript source.
 ///
@@ -17,11 +22,14 @@ struct MiniAppEditorView: View {
     /// The natural-language request the user types for the AI assistant.
     @State private var aiPrompt = ""
     /// Which Foundation Models backend handles the request.
-    @State private var aiBackend: AICodeService.Backend = .onDevice
+    @State private var aiBackend: AICodeService.Backend = .copyPrompt
     /// True while a generation request is in flight.
     @State private var isGenerating = false
     /// A user-facing error from the last generation attempt, shown in an alert.
     @State private var aiError: String?
+    /// Briefly true right after the prompt is copied to the clipboard, so the
+    /// button can confirm the copy.
+    @State private var didCopyPrompt = false
 
     /// Binds the model's string-backed framework to the typed enum for the Picker.
     private var frameworkSelection: Binding<MiniAppFramework> {
@@ -64,10 +72,23 @@ struct MiniAppEditorView: View {
                 }
             }
             aiSection
-            Section("Source") {
+            Section {
                 CodeEditorView(text: $app.source)
                     .frame(minHeight: 280)
                     .listRowInsets(EdgeInsets())
+            } header: {
+                HStack {
+                    Text("Source")
+                    Spacer()
+                    // PasteButton uses the user's tap as consent to read the
+                    // pasteboard, mirroring how imports work elsewhere. Replaces
+                    // the whole source with the pasted code (e.g. an LLM's reply).
+                    PasteButton(payloadType: String.self) { strings in
+                        if let text = strings.first { app.source = text }
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.capsule)
+                }
             }
             Section {
                 Text(footnote)
@@ -122,13 +143,20 @@ struct MiniAppEditorView: View {
             .disabled(isGenerating)
 
             Button {
-                Task { await generate() }
+                if aiBackend.runsModel {
+                    Task { await generate() }
+                } else {
+                    copyPromptToClipboard()
+                }
             } label: {
                 if isGenerating {
                     HStack(spacing: 8) {
                         ProgressView()
                         Text("Generating…")
                     }
+                } else if !aiBackend.runsModel {
+                    Label(didCopyPrompt ? "Copied" : "Copy Prompt",
+                          systemImage: didCopyPrompt ? "checkmark" : "doc.on.doc")
                 } else {
                     Label("Generate Code", systemImage: "sparkles")
                 }
@@ -137,9 +165,44 @@ struct MiniAppEditorView: View {
         } header: {
             Text("AI Assistant")
         } footer: {
-            Text(aiBackend == .privateCloudCompute
-                 ? "Runs a larger model on Apple's Private Cloud Compute. Requires a network connection and Apple Intelligence."
-                 : "Runs Apple's on-device model. Private and works offline.")
+            Text(footerText)
+        }
+    }
+
+    /// Explains what the selected AI option will do.
+    private var footerText: String {
+        switch aiBackend {
+        case .onDevice:
+            return "Runs Apple's on-device model. Private and works offline."
+        case .privateCloudCompute:
+            return "Runs a larger model on Apple's Private Cloud Compute. Requires a network connection and Apple Intelligence."
+        case .copyPrompt:
+            return "Copies the full prompt — instructions, your request, and the current source — to the clipboard so you can paste it into another LLM, then paste its reply back with the Source paste button."
+        }
+    }
+
+    /// Builds the full prompt for the current request and current source and puts
+    /// it on the clipboard, then briefly confirms on the button.
+    private func copyPromptToClipboard() {
+        let request = aiPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !request.isEmpty else { return }
+
+        let text = AICodeService.fullPromptText(
+            request: request,
+            currentSource: app.source,
+            framework: MiniAppFramework(rawValue: app.framework) ?? .vanilla)
+
+        #if os(iOS)
+        UIPasteboard.general.string = text
+        #elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #endif
+
+        didCopyPrompt = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            didCopyPrompt = false
         }
     }
 

@@ -18,12 +18,17 @@ import FoundationModels
 /// straight into the editor and wrapped by `MiniAppDocument`.
 enum AICodeService {
 
-    /// Which Foundation Models backend should run a request.
+    /// Which Foundation Models backend should run a request — or, for
+    /// ``Backend/copyPrompt``, that no model runs at all and the assembled prompt
+    /// is exported to the clipboard for pasting into an external LLM instead.
     enum Backend: String, CaseIterable, Identifiable {
         /// The on-device `SystemLanguageModel`.
         case onDevice
         /// The larger server-side model on Apple's Private Cloud Compute.
         case privateCloudCompute
+        /// Not a model: copies the full prompt (instructions + request + current
+        /// source) to the clipboard so the user can run it in another LLM.
+        case copyPrompt
 
         var id: String { rawValue }
 
@@ -31,8 +36,13 @@ enum AICodeService {
             switch self {
             case .onDevice: return "On-device"
             case .privateCloudCompute: return "Private Cloud Compute"
+            case .copyPrompt: return "Copy prompt for another LLM"
             }
         }
+
+        /// Whether choosing this option runs a Foundation Models request, versus
+        /// exporting the prompt for use elsewhere.
+        var runsModel: Bool { self != .copyPrompt }
     }
 
     /// Whether a backend can be used right now, carrying a human-readable reason
@@ -48,6 +58,9 @@ enum AICodeService {
     /// explain why a request can't run before the user waits for it.
     static func availability(for backend: Backend) -> Availability {
         switch backend {
+        case .copyPrompt:
+            // Nothing runs — building the prompt text is always possible.
+            return .available
         case .onDevice:
             switch SystemLanguageModel.default.availability {
             case .available:
@@ -92,7 +105,7 @@ enum AICodeService {
                              framework: MiniAppFramework,
                              backend: Backend) -> AsyncThrowingStream<String, Error> {
         let session = makeSession(backend: backend, framework: framework)
-        let prompt = makePrompt(request: request, currentSource: currentSource)
+        let prompt = makePrompt(request: request, currentSource: currentSource, framework: framework)
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -108,6 +121,15 @@ enum AICodeService {
         }
     }
 
+    /// The complete prompt — system instructions plus the request and current
+    /// source — as one block of text, for pasting into an external LLM. Mirrors
+    /// exactly what the on-device and Private Cloud Compute backends are given.
+    static func fullPromptText(request: String,
+                               currentSource: String,
+                               framework: MiniAppFramework) -> String {
+        makePrompt(request: request, currentSource: currentSource, framework: framework)
+    }
+
     // MARK: - Session & prompt construction
 
     /// Builds a single-turn session against the chosen backend, primed with
@@ -115,7 +137,9 @@ enum AICodeService {
     private static func makeSession(backend: Backend, framework: MiniAppFramework) -> LanguageModelSession {
         let text = instructions(for: framework)
         switch backend {
-        case .onDevice:
+        case .copyPrompt, .onDevice:
+            // `.copyPrompt` never reaches here — callers gate on `backend.runsModel`
+            // and export the prompt instead — but the switch must stay exhaustive.
             return LanguageModelSession(instructions: text)
         case .privateCloudCompute:
             // Guarded so the app still builds and runs on iOS 26; callers gate on
@@ -180,19 +204,26 @@ enum AICodeService {
 
     /// Wraps the user's request with the current source (when editing) so the model
     /// modifies in place rather than starting over.
-    private static func makePrompt(request: String, currentSource: String) -> String {
+    private static func makePrompt(request: String, currentSource: String, framework: MiniAppFramework) -> String {
         let trimmed = currentSource.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return "Create a mini-app. \(request)"
+        if trimmed.isEmpty { // TODO: review this, in this case we do want "Markdown fences"
+            return """
+            \(instructions(for: framework))
+            
+            \(request)
+            """
         }
         return """
-        Here is the current mini-app source:
+        I have a mini-app that runs in a special webview container.
+        
+        \(request)
+        Return the complete result source.
+        
+        Here's the app source I have:
 
+        ```
         \(currentSource)
-
-        Modify it as follows: \(request)
-
-        Return the complete updated source.
+        ```
         """
     }
 
