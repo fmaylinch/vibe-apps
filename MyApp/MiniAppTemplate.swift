@@ -5,6 +5,7 @@ import Foundation
 enum MiniAppTemplate {
     static var todosVanilla: MiniAppBundle { load("todos-vanilla", "html") }
     static var todosReact: MiniAppBundle { load("todos-react", "jsx") }
+    static var todosReactSimple: MiniAppBundle { load("todos-react-simple", "jsx") }
     static var googleMapsHtml: MiniAppBundle { load("google-maps", "html") }
     static var googleMapsJsx: MiniAppBundle { load("google-maps", "jsx") }
 

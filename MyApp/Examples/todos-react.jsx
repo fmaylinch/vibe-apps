@@ -1,6 +1,6 @@
-// @name To-dos (React + db features)
+// @name To-dos (React, complex)
 // @type react
-// @icon 🗄️
+// @icon ✅
 
 // Globals: React, db
 

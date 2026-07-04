@@ -148,12 +148,17 @@ struct HomeView: View {
             Button {
                 createMiniApp(from: MiniAppTemplate.todosVanilla)
             } label: {
-                Label("HTML / JavaScript", systemImage: "curlybraces")
+                Label("HTML/JS (To-Dos)", systemImage: "curlybraces")
+            }
+            Button {
+                createMiniApp(from: MiniAppTemplate.todosReactSimple)
+            } label: {
+                Label("React (To-Dos)", systemImage: "atom")
             }
             Button {
                 createMiniApp(from: MiniAppTemplate.todosReact)
             } label: {
-                Label("React (JSX)", systemImage: "atom")
+                Label("React (To-Dos filtered)", systemImage: "atom")
             }
 
             Divider()
