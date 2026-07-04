@@ -715,6 +715,7 @@ function App() {
                 fontFamily: "system-ui",
                 color: C.text,
                 minHeight: "100%",
+                padding: 7,
             }}
         >
             {error && (

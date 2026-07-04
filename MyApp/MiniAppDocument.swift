@@ -21,7 +21,7 @@ enum MiniAppDocument {
     /// it with their own `<style>` block.
     private static let baseCSS = """
       :root { color-scheme: light dark; }
-      body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 16px; }
+      body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 0px; }
       h1 { font-size: 1.4rem; margin: 0 0 12px; }
     """
 
