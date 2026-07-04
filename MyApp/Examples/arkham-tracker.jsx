@@ -314,6 +314,92 @@ function AddRow({ type, value, onChange, onAdd }) {
     );
 }
 
+function DeleteDialog({ element, onCancel, onConfirm }) {
+    if (!element) {
+        return null;
+    }
+
+    const description =
+        element.type === "random"
+            ? "this random generator"
+            : `"${element.name}"`;
+
+    return (
+        <div
+            role="presentation"
+            onClick={onCancel}
+            style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 1000,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 20,
+                background: "#000000aa",
+            }}
+        >
+            <div
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="delete-dialog-title"
+                onClick={(event) => event.stopPropagation()}
+                style={{
+                    width: "min(100%, 360px)",
+                    padding: 20,
+                    borderRadius: 12,
+                    border: `1px solid ${C.border}`,
+                    background: C.card,
+                    boxShadow: "0 16px 48px #00000088",
+                }}
+            >
+                <h2
+                    id="delete-dialog-title"
+                    style={{ margin: "0 0 8px", fontSize: 20 }}
+                >
+                    Confirm deletion
+                </h2>
+
+                <p style={{ margin: "0 0 20px", color: C.muted }}>
+                    Delete {description}? This cannot be undone.
+                </p>
+
+                <div
+                    style={{
+                        display: "flex",
+                        justifyContent: "flex-end",
+                        gap: 8,
+                    }}
+                >
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        style={{
+                            ...addBtn,
+                            background: C.border,
+                            color: C.text,
+                        }}
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={onConfirm}
+                        style={{
+                            ...addBtn,
+                            background: COLORS.health,
+                            color: "#fff",
+                        }}
+                    >
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // ── Random generator ──
 //
 // Pattern:
@@ -444,6 +530,7 @@ function App() {
     const [els, setEls] = useState([]);
     const [loaded, setLoaded] = useState(false);
     const [error, setError] = useState("");
+    const [pendingRemoval, setPendingRemoval] = useState(null);
 
     const [drafts, setDrafts] = useState({
         location: "",
@@ -633,7 +720,23 @@ function App() {
         }
     }
 
-    function remove(id) {
+    function requestRemove(id) {
+        const element = els.find((item) => item.id === id);
+
+        if (element) {
+            setPendingRemoval(element);
+        }
+    }
+
+    function confirmRemove() {
+        const id = pendingRemoval?.id;
+
+        if (!id) {
+            return;
+        }
+
+        setPendingRemoval(null);
+
         // Remove immediately from the interface.
         setEls((previous) =>
             previous.filter((element) => element.id !== id)
@@ -705,7 +808,7 @@ function App() {
                 onLocation={(locationId) =>
                     setLocation(element.id, locationId)
                 }
-                onRemove={() => remove(element.id)}
+                onRemove={() => requestRemove(element.id)}
             />
         ));
 
@@ -718,6 +821,12 @@ function App() {
                 padding: 7,
             }}
         >
+            <DeleteDialog
+                element={pendingRemoval}
+                onCancel={() => setPendingRemoval(null)}
+                onConfirm={confirmRemove}
+            />
+
             {error && (
                 <div
                     role="alert"
@@ -771,7 +880,7 @@ function App() {
                         onChange={(value) =>
                             setRandomValue(random.id, value)
                         }
-                        onRemove={() => remove(random.id)}
+                        onRemove={() => requestRemove(random.id)}
                     />
                 ))}
 
