@@ -82,6 +82,7 @@ nonisolated struct MiniAppBundle {
     var storage: JSONValue?
     var storageRaw: String?
     var isInline: Bool
+    var showsInlineHeader: Bool
     var inlineMaxHeight: Double?
 
     /// The compact storage blob (`const STORAGE = …`) to seed the app's `db`
@@ -106,6 +107,7 @@ nonisolated struct MiniAppBundle {
             framework: MiniAppFramework(rawValue: framework)?.rawValue
                 ?? MiniAppFramework.vanilla.rawValue,
             isInline: isInline,
+            showsInlineHeader: showsInlineHeader,
             inlineMaxHeight: inlineMaxHeight
         )
     }
@@ -242,6 +244,7 @@ enum MiniAppExportCoder {
             storage: parsed.storageRaw == nil ? parsed.storage : nil,
             storageRaw: parsed.storageRaw,
             isInline: parsed.metadata["inline"].flatMap(Bool.init) ?? false,
+            showsInlineHeader: parsed.metadata["inline-header"].flatMap(Bool.init) ?? true,
             inlineMaxHeight: parsed.metadata["inline-max-height"].flatMap(Double.init)
         )
     }
@@ -321,6 +324,8 @@ enum MiniAppExportCoder {
             "@icon \(singleLine(app.icon))"
         ]
         if app.isInline { lines.append("@inline true") }
+        // Only emitted when hiding the header — the default is to show it.
+        if app.isInline && !app.showsInlineHeader { lines.append("@inline-header false") }
         if let height = app.inlineMaxHeight {
             lines.append("@inline-max-height \(height.formatted(.number.grouping(.never)))")
         }

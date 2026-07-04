@@ -26,6 +26,10 @@ final class MiniApp {
     /// When `true`, the mini-app renders directly in the main list instead of
     /// requiring a tap to open it in its own screen.
     var isInline: Bool = false
+    /// When `true` (the default), an inline mini-app shows its header (icon +
+    /// name) above its rendered content in the list. Set `false` to render only
+    /// the content. Has no effect unless `isInline` is `true`.
+    var showsInlineHeader: Bool = true
     /// Optional cap (in points) on the height an inline mini-app occupies in the
     /// list. `nil` means no cap — the row grows to fit the content. When the
     /// content exceeds the cap, the inline view scrolls within this height.
@@ -38,6 +42,7 @@ final class MiniApp {
          source: String = "",
          framework: String = MiniAppFramework.vanilla.rawValue,
          isInline: Bool = false,
+         showsInlineHeader: Bool = true,
          inlineMaxHeight: Double? = nil,
          createdAt: Date = .now,
          updatedAt: Date = .now) {
@@ -46,6 +51,7 @@ final class MiniApp {
         self.source = source
         self.framework = framework
         self.isInline = isInline
+        self.showsInlineHeader = showsInlineHeader
         self.inlineMaxHeight = inlineMaxHeight
         self.createdAt = createdAt
         self.updatedAt = updatedAt

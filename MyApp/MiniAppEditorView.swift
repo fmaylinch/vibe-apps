@@ -65,6 +65,7 @@ struct MiniAppEditorView: View {
                 }
                 Toggle("Show inline in list", isOn: $app.isInline)
                 if app.isInline {
+                    Toggle("Show app header", isOn: $app.showsInlineHeader)
                     TextField("Max height (points, optional)", text: maxHeightText)
                         #if os(iOS)
                         .keyboardType(.numberPad)

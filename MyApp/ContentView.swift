@@ -211,13 +211,16 @@ struct HomeView: View {
         }
     }
 
-    /// A single list entry. Inline mini-apps render their UI directly beneath a
-    /// non-interactive header; the rest are a plain row that opens the runner on tap.
+    /// A single list entry. Inline mini-apps render their UI directly, optionally
+    /// beneath a non-interactive header (icon + name); the rest are a plain row
+    /// that opens the runner on tap.
     @ViewBuilder
     private func row(for app: MiniApp) -> some View {
         if app.isInline {
             VStack(alignment: .leading, spacing: 10) {
-                MiniAppRow(app: app)
+                if app.showsInlineHeader {
+                    MiniAppRow(app: app)
+                }
                 InlineMiniAppView(app: app)
             }
             .padding(.vertical, 4)
