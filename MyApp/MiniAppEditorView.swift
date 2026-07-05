@@ -30,6 +30,10 @@ struct MiniAppEditorView: View {
     /// Briefly true right after the prompt is copied to the clipboard, so the
     /// button can confirm the copy.
     @State private var didCopyPrompt = false
+    /// The source as it was when the editor opened (the last-saved version).
+    /// Captured once on appear so a save that changes the code can stash this
+    /// pre-existing source into `app.sourceBackup` for rollback.
+    @State private var originalSource: String?
 
     /// Binds the model's string-backed framework to the typed enum for the Picker.
     private var frameworkSelection: Binding<MiniAppFramework> {
@@ -94,6 +98,22 @@ struct MiniAppEditorView: View {
                 HStack {
                     Text("Source")
                     Spacer()
+                    // Rollback swaps the editor's source with its backup (the
+                    // pre-existing source from the last code-changing save). It
+                    // only updates the editor — the swap isn't persisted until
+                    // the user taps Save. Swapping (rather than one-way restore)
+                    // means a second tap redoes, matching the save-time backup
+                    // rule where the pre-existing source becomes the new backup.
+                    Button {
+                        let current = app.source
+                        app.source = app.sourceBackup
+                        app.sourceBackup = current
+                    } label: {
+                        Label("Roll Back", systemImage: "arrow.uturn.backward")
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.capsule)
+                    .disabled(app.sourceBackup.isEmpty)
                     // PasteButton uses the user's tap as consent to read the
                     // pasteboard, mirroring how imports work elsewhere. Replaces
                     // the whole source with the pasted code (e.g. an LLM's reply).
@@ -114,6 +134,11 @@ struct MiniAppEditorView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .onAppear {
+            // Capture the last-saved source once, before any edits, so Save can
+            // tell whether the code changed and what to stash as the backup.
+            if originalSource == nil { originalSource = app.source }
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", role: .cancel) {
@@ -122,6 +147,12 @@ struct MiniAppEditorView: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
+                    // When the code changed, keep the pre-existing source as the
+                    // backup so the edit can be rolled back later.
+                    let previous = originalSource ?? app.source
+                    if app.source != previous {
+                        app.sourceBackup = previous
+                    }
                     if isNew {
                         context.insert(app)
                     }

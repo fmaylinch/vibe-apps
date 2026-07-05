@@ -12,6 +12,12 @@ final class MiniApp {
     var name: String = ""
     var icon: String = "✨"
     var source: String = ""
+    /// The previous version of `source`, kept so an edit can be rolled back from
+    /// the editor. Whenever a save changes the code, the pre-existing source is
+    /// stashed here. This is purely local editing history — it is deliberately
+    /// not part of the export/import format, so it is lost when a mini-app is
+    /// exported and re-imported.
+    var sourceBackup: String = ""
     /// Which JS runtime to inject before the mini-app runs. See `MiniAppFramework`.
     var framework: String = MiniAppFramework.vanilla.rawValue
     /// Stable identifier used to scope this app's `db` documents (`MiniAppDoc`
