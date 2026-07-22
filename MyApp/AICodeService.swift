@@ -213,13 +213,16 @@ enum AICodeService {
             \(request)
             """
         }
+        // TODO: different prompts for a new app or for a modification
         return """
-        I have a mini-app that runs in a special webview container.
-        
+        I run mini-apps in a WKWebView container.
+        They can use React (already imported) and storage via a global `db` variable.
+
         \(request)
-        Return the complete result source.
+
+        Return the complete result source so I can copy it.
         
-        Here's the app source I have:
+        Here's the app source I have as example, so you can follow the same structure:
 
         ```
         \(currentSource)

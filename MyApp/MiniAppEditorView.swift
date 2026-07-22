@@ -92,7 +92,7 @@ struct MiniAppEditorView: View {
             aiSection
             Section {
                 CodeEditorView(text: $app.source)
-                    .frame(minHeight: 280)
+                    .frame(minHeight: 400)
                     .listRowInsets(EdgeInsets())
             } header: {
                 HStack {
