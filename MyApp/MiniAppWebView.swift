@@ -135,6 +135,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
         // The coordinator needs the web view to settle `db` Promises (it calls
         // back into the page via evaluateJavaScript). Held weakly there.
         context.coordinator.webView = webView
+        webView.navigationDelegate = context.coordinator
         if sizeToContent {
             webView.isOpaque = false
             webView.backgroundColor = .clear
@@ -189,7 +190,7 @@ struct MiniAppWebView: PlatformViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         /// The mini-app whose `db` documents this coordinator reads and writes,
         /// via `app.modelContext`. Held strongly (the view hierarchy owns it too).
         private let app: MiniApp
@@ -208,6 +209,12 @@ struct MiniAppWebView: PlatformViewRepresentable {
             self.app = app
             self.onHeightChange = onHeightChange
             self.onLog = onLog
+        }
+
+        /// WebKit may discard a web-content process while the app is suspended to reclaim memory.
+        /// Reload may fix the problem that the mini-apps get stuck sometimes (maybe due to app suspension).
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            webView.reload()
         }
 
         func userContentController(_ controller: WKUserContentController,
